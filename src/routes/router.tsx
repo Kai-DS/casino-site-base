@@ -8,11 +8,14 @@ import { VideoPokerPage } from "@/pages/games/VideoPokerPage";
 import { ComingSoonPage } from "@/pages/games/ComingSoonPage";
 import { AppShell } from "@/components/layout/AppShell";
 import { RouteErrorBoundary } from "@/components/layout/RouteErrorBoundary";
+import { VideoPokerSandbox } from "@/sandbox/VideoPokerSandbox";
 
 // URLs are kebab-case; GameIds are camelCase — the mapping lives in constants/games.ts (spec §6).
 export const router = createBrowserRouter([
   { path: "/", element: <TitlePage /> },
   { path: "/login", element: <LoginPage /> },
+  // Isolated dev harness — no auth/lobby, mock economy. Same game logic as production.
+  { path: "/sandbox/video-poker", element: <VideoPokerSandbox /> },
   {
     element: <AppShell />, // shared header/layout + guest-login guard
     errorElement: <RouteErrorBoundary />,

@@ -1,11 +1,9 @@
 // games/videoPoker/adapter.ts — seam between Video Poker and the casino economy.
 // betUnit is the base bet; payouts are multiplier × betUnit (spec §8, §9.2).
 import type { Rate } from "@/types/casino";
-import type { GameResult } from "@/types/game";
 import type { HandRank } from "@/games/shared/poker/handEvaluator";
 import { classifyVideoPoker, type PayoutLine } from "./logic/payout";
-
-export type GameResultDraft = Omit<GameResult, "id" | "userId" | "playedAt">;
+import type { GameResultDraft } from "@/games/shared/economy";
 
 /** Base bet for one hand at this rate. */
 export function videoPokerBet(rate: Rate): number {

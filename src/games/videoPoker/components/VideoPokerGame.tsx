@@ -4,15 +4,17 @@ import { PAYTABLE } from "../logic/payout";
 import { CardFace } from "@/components/casino/CardFace";
 import { Button } from "@/components/common/Button";
 import { formatChips } from "@/utils/format";
+import type { GameEconomy } from "@/games/shared/economy";
 
 type VideoPokerGameProps = {
   rate: Rate;
+  economy: GameEconomy;
   onInsufficient: () => void;
 };
 
-export function VideoPokerGame({ rate, onInsufficient }: VideoPokerGameProps) {
+export function VideoPokerGame({ rate, economy, onInsufficient }: VideoPokerGameProps) {
   const { hand, held, phase, lastLine, bet, canDeal, canDraw, deal, draw, toggleHold } =
-    useVideoPoker(rate, onInsufficient);
+    useVideoPoker(rate, economy, onInsufficient);
 
   const won = lastLine && lastLine.multiplier > 0;
 

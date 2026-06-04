@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useCasinoStore } from "@/store/casinoStore";
 import { VideoPokerGame } from "@/games/videoPoker/components/VideoPokerGame";
+import { useStoreEconomy } from "@/games/shared/useStoreEconomy";
 import { RescueModal } from "@/components/casino/RescueModal";
 import { Button } from "@/components/common/Button";
 import { ChipDisplay } from "@/components/common/ChipDisplay";
@@ -15,6 +16,7 @@ export function VideoPokerPage() {
   const canClaimDailyBonus = useCasinoStore((s) => s.canClaimDailyBonus);
   const canRescue = useCasinoStore((s) => s.canRescue);
   const rescueCooldownMinutes = useCasinoStore((s) => s.rescueCooldownMinutes);
+  const economy = useStoreEconomy("videoPoker");
 
   const [rescueOpen, setRescueOpen] = useState(false);
 
@@ -34,7 +36,7 @@ export function VideoPokerPage() {
 
       <h1 className="text-center font-display text-3xl text-gold">Video Poker</h1>
 
-      <VideoPokerGame rate={rate} onInsufficient={() => setRescueOpen(true)} />
+      <VideoPokerGame rate={rate} economy={economy} onInsufficient={() => setRescueOpen(true)} />
 
       <RescueModal
         open={rescueOpen}
