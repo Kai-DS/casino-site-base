@@ -15,7 +15,7 @@ import { Button } from "@/components/common/Button";
 export function LobbyPage() {
   const navigate = useNavigate();
   const user = useCasinoStore((s) => s.user);
-  const setRate = useCasinoStore((s) => s.setRate);
+  const buyIn = useCasinoStore((s) => s.buyIn);
   const claimDailyBonus = useCasinoStore((s) => s.claimDailyBonus);
   const rescue = useCasinoStore((s) => s.rescue);
   const canClaimDailyBonus = useCasinoStore((s) => s.canClaimDailyBonus);
@@ -47,9 +47,9 @@ export function LobbyPage() {
     setRateGame(game);
   };
 
-  const onConfirmRate = (rate: Rate) => {
+  const onConfirmRate = (rate: Rate, amount: number) => {
     if (!rateGame) return;
-    setRate(rate);
+    if (!buyIn(rate, amount)) return;
     const target = rateGame.path;
     setRateGame(null);
     navigate(target);

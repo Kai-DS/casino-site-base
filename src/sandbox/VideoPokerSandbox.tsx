@@ -61,7 +61,7 @@ export function VideoPokerSandbox() {
                   : "border-white/15 text-white/60 hover:bg-white/10"
               }`}
             >
-              {r.label} <span className="text-white/40">×{r.betUnit}</span>
+              {r.label} <span className="text-white/40">bet {r.betMin}–{r.betMax}</span>
             </button>
           ))}
         </div>

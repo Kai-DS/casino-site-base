@@ -109,7 +109,7 @@ export function NeonJackGame({ rate, onInsufficient }: NeonJackGameProps) {
       </div>
 
       <p className="mt-4 text-center text-[11px] text-white/30">
-        Rate ×{rate.betUnit} · {rate.betUnit} chip{rate.betUnit === 1 ? "" : "s"} per medal
+        {rate.label} · {rate.betMin} chip{rate.betMin === 1 ? "" : "s"} per medal
       </p>
     </div>
   );

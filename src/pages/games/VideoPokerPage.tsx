@@ -4,13 +4,17 @@ import { useCasinoStore } from "@/store/casinoStore";
 import { VideoPokerGame } from "@/games/videoPoker/components/VideoPokerGame";
 import { useStoreEconomy } from "@/games/shared/useStoreEconomy";
 import { RescueModal } from "@/components/casino/RescueModal";
+import { RebuyModal } from "@/components/casino/RebuyModal";
+import { StackBar } from "@/components/casino/StackBar";
 import { Button } from "@/components/common/Button";
-import { ChipDisplay } from "@/components/common/ChipDisplay";
 
 export function VideoPokerPage() {
   const navigate = useNavigate();
   const user = useCasinoStore((s) => s.user);
   const rate = useCasinoStore((s) => s.currentRate);
+  const stack = useCasinoStore((s) => s.tableStack);
+  const rebuy = useCasinoStore((s) => s.rebuy);
+  const leaveTable = useCasinoStore((s) => s.leaveTable);
   const claimDailyBonus = useCasinoStore((s) => s.claimDailyBonus);
   const rescue = useCasinoStore((s) => s.rescue);
   const canClaimDailyBonus = useCasinoStore((s) => s.canClaimDailyBonus);
@@ -19,28 +23,51 @@ export function VideoPokerPage() {
   const economy = useStoreEconomy("videoPoker");
 
   const [rescueOpen, setRescueOpen] = useState(false);
+  const [rebuyOpen, setRebuyOpen] = useState(false);
 
   if (!rate) return <Navigate to="/lobby" replace />;
 
+  const chips = user?.chips ?? 0;
+
+  const exit = () => {
+    leaveTable();
+    navigate("/lobby");
+  };
+
+  const onInsufficient = () => {
+    if (chips >= rate.buyInMin) setRebuyOpen(true);
+    else setRescueOpen(true);
+  };
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={() => navigate("/lobby")}>
+        <Button variant="ghost" size="sm" onClick={exit}>
           ← Lobby
         </Button>
-        <div className="flex items-center gap-2 text-sm text-white/60">
-          <span className="font-display text-gold">{rate.label}</span>
-          {user && <ChipDisplay chips={user.chips} size="sm" />}
-        </div>
+        <span className="font-display text-gold">{rate.label}</span>
       </div>
 
       <h1 className="text-center font-display text-3xl text-gold">Video Poker</h1>
 
-      <VideoPokerGame rate={rate} economy={economy} onInsufficient={() => setRescueOpen(true)} />
+      <StackBar rate={rate} chips={chips} stack={stack} onRebuy={() => setRebuyOpen(true)} />
+
+      <VideoPokerGame rate={rate} economy={economy} onInsufficient={onInsufficient} />
+
+      <RebuyModal
+        open={rebuyOpen}
+        rate={rate}
+        chips={chips}
+        stack={stack}
+        onClose={() => setRebuyOpen(false)}
+        onRebuy={(amount) => {
+          if (rebuy(amount)) setRebuyOpen(false);
+        }}
+      />
 
       <RescueModal
         open={rescueOpen}
-        chips={user?.chips ?? 0}
+        chips={chips}
         canClaimDaily={canClaimDailyBonus()}
         canRescue={canRescue()}
         rescueCooldownMinutes={rescueCooldownMinutes()}

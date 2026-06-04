@@ -13,7 +13,7 @@ import {
   type PersistedRoot,
 } from "@/repositories/storage";
 import { createGuestProfile, computeLevel } from "@/repositories/userRepository";
-import { BANKRUPTCY_THRESHOLD } from "@/constants/rates";
+import { BANKRUPTCY_THRESHOLD, clampBuyIn } from "@/constants/rates";
 import { isNewLocalDay, localDayKey, msSince, cooldownRemainingMinutes } from "@/utils/date";
 import { uuid } from "@/utils/id";
 
@@ -28,6 +28,9 @@ type CasinoState = {
   dailyBonus: DailyBonus;
   // ── runtime-only (never persisted; spec §5.2) ──
   currentRate: Rate | null;
+  // Session bankroll "on the table". null = not seated. Moves in lockstep with chips, so
+  // user.chips stays the single source of truth and a reload can't lose money (spec §5.4, §12.6).
+  tableStack: number | null;
   hydrated: boolean;
 
   // ── lifecycle ──
@@ -35,6 +38,11 @@ type CasinoState = {
   login: (name: string) => void;
   logout: () => void;
   setRate: (rate: Rate | null) => void;
+
+  // ── table session (buy-in) ──
+  buyIn: (rate: Rate, amount: number) => boolean;
+  rebuy: (amount: number) => boolean;
+  leaveTable: () => void;
 
   // ── chip economy (atomic) ──
   placeBet: (gameId: GameId, amount: number) => boolean;
@@ -92,6 +100,7 @@ export const useCasinoStore = create<CasinoState>((set, get) => {
     results: [],
     dailyBonus: createDefaultRoot().dailyBonus,
     currentRate: null,
+    tableStack: null,
     hydrated: false,
 
     async hydrate() {
@@ -113,6 +122,7 @@ export const useCasinoStore = create<CasinoState>((set, get) => {
         results: [],
         dailyBonus: createDefaultRoot().dailyBonus,
         currentRate: null,
+        tableStack: null,
       });
       persist();
     },
@@ -126,6 +136,7 @@ export const useCasinoStore = create<CasinoState>((set, get) => {
         results: [],
         dailyBonus: fresh.dailyBonus,
         currentRate: null,
+        tableStack: null,
       });
     },
 
@@ -133,17 +144,43 @@ export const useCasinoStore = create<CasinoState>((set, get) => {
       set({ currentRate: rate });
     },
 
-    placeBet(gameId, amount) {
+    buyIn(rate, amount) {
       const { user } = get();
       if (!user) return false;
+      if (user.chips < rate.buyInMin) return false; // not eligible for this table
+      const stack = clampBuyIn(rate, amount, user.chips);
+      set({ currentRate: rate, tableStack: stack });
+      return true;
+    },
+
+    rebuy(amount) {
+      const { user, currentRate, tableStack } = get();
+      if (!user || !currentRate) return false;
+      const current = tableStack ?? 0;
+      // Top up toward min(buyInMax, chips); stack never exceeds the wallet (lockstep invariant).
+      const target = Math.min(currentRate.buyInMax, user.chips, current + Math.max(0, amount));
+      if (target <= current) return false;
+      set({ tableStack: target });
+      return true;
+    },
+
+    leaveTable() {
+      set({ currentRate: null, tableStack: null });
+    },
+
+    placeBet(gameId, amount) {
+      const { user, tableStack } = get();
+      if (!user) return false;
       if (!Number.isFinite(amount) || amount <= 0) return false;
-      if (user.chips < amount) return false; // insufficient → no state change
+      if (user.chips < amount) return false; // insufficient wallet → no state change
+      if (tableStack !== null && tableStack < amount) return false; // session stack exhausted
 
       const balanceAfter = user.chips - amount;
       const tx = makeTx("bet", gameId, -amount, balanceAfter);
       set((s) => ({
         user: s.user ? { ...s.user, chips: balanceAfter, updatedAt: new Date().toISOString() } : s.user,
         transactions: [...s.transactions, tx],
+        tableStack: s.tableStack === null ? null : s.tableStack - amount,
       }));
       persist();
       return true;
@@ -180,6 +217,7 @@ export const useCasinoStore = create<CasinoState>((set, get) => {
         user: nextUser,
         results: [...s.results, result],
         transactions: winTx ? [...s.transactions, winTx] : s.transactions,
+        tableStack: s.tableStack === null ? null : s.tableStack + result.payout,
       }));
       persist();
       return result;
@@ -250,6 +288,7 @@ export function __resetCasinoStoreForTest(): void {
     results: [],
     dailyBonus: fresh.dailyBonus,
     currentRate: null,
+    tableStack: null,
     hydrated: true,
   });
 }

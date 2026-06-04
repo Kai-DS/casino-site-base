@@ -1,13 +1,20 @@
 // types/casino.ts — see spec §10
 import type { GameId } from "./game";
 
-export type RateId = "low" | "middle" | "high" | "vip";
+export type RateId = "low" | "middle" | "high" | "vip" | "royal" | "legend";
 
 export type Rate = {
   id: RateId;
   label: string;
-  minBalance: number; // entry gate (NOT subtracted)
-  betUnit: number; // betting scale (interpreted per-game by each adapter)
+  // Buy-in (持ち込み): eligibility gate is `chips >= buyInMin`. A session brings a stack
+  // in [buyInMin, min(buyInMax, chips)]; when it runs out you re-buy in the same range.
+  buyInMin: number;
+  buyInMax: number;
+  // Bet scale: betMin = 1 BET (one coin), betMax = MAX BET (= 5 × betMin). Per-game adapters
+  // interpret these (slot = chips/medal on betMin; poker = chosen coins 1..5).
+  betMin: number;
+  betMax: number;
+  blurb: string; // 目安 — short flavour text
 };
 
 export type TransactionType = "bet" | "win" | "bonus" | "refund";
