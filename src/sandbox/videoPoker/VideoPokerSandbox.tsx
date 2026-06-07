@@ -6,7 +6,7 @@ import { VideoPokerGame } from "@/games/videoPoker/components/VideoPokerGame";
 import { ChipDisplay } from "@/components/common/ChipDisplay";
 import { Button } from "@/components/common/Button";
 import { formatChips, formatSignedChips } from "@/utils/format";
-import { useMockEconomy } from "./useMockEconomy";
+import { useMockEconomy } from "../useMockEconomy";
 
 /**
  * /sandbox/video-poker — isolated harness for polishing Video Poker.
@@ -69,8 +69,10 @@ export function VideoPokerSandbox() {
         <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
           {/* The real game component, fed the mock economy */}
           <VideoPokerGame
+            key={rate.id}
             rate={rate}
             economy={economy}
+            initialTableStack={Math.min(rate.buyInMax, economy.chips)}
             onInsufficient={() => economy.topUp(1000)}
           />
 

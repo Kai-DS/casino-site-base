@@ -5,20 +5,25 @@ import type { GameId } from "@/types/game";
 import { useCasinoStore } from "@/store/casinoStore";
 import type { GameEconomy } from "./economy";
 
-export function useStoreEconomy(gameId: GameId): GameEconomy {
+type StoreEconomyOptions = {
+  syncTableStack?: boolean;
+};
+
+export function useStoreEconomy(gameId: GameId, options: StoreEconomyOptions = {}): GameEconomy {
   // Store action identities are stable across renders; only `chips` changes.
   const placeBetAction = useCasinoStore((s) => s.placeBet);
   const applyGameResult = useCasinoStore((s) => s.applyGameResult);
   const chips = useCasinoStore((s) => s.user?.chips ?? 0);
+  const tableStackMode = options.syncTableStack === false ? "ignore" : "sync";
 
   return useMemo<GameEconomy>(
     () => ({
       chips,
-      placeBet: (amount) => placeBetAction(gameId, amount),
+      placeBet: (amount) => placeBetAction(gameId, amount, { tableStack: tableStackMode }),
       settle: (draft) => {
-        applyGameResult(draft);
+        applyGameResult(draft, { tableStack: tableStackMode });
       },
     }),
-    [chips, placeBetAction, applyGameResult, gameId],
+    [chips, placeBetAction, applyGameResult, gameId, tableStackMode],
   );
 }

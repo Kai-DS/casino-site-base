@@ -45,8 +45,11 @@ type CasinoState = {
   leaveTable: () => void;
 
   // ── chip economy (atomic) ──
-  placeBet: (gameId: GameId, amount: number) => boolean;
-  applyGameResult: (result: Omit<GameResult, "id" | "userId" | "playedAt">) => GameResult | null;
+  placeBet: (gameId: GameId, amount: number, options?: TableStackSyncOptions) => boolean;
+  applyGameResult: (
+    result: Omit<GameResult, "id" | "userId" | "playedAt">,
+    options?: TableStackSyncOptions,
+  ) => GameResult | null;
   claimDailyBonus: () => boolean;
   rescue: () => boolean;
 
@@ -54,6 +57,10 @@ type CasinoState = {
   canClaimDailyBonus: () => boolean;
   canRescue: () => boolean;
   rescueCooldownMinutes: () => number;
+};
+
+type TableStackSyncOptions = {
+  tableStack?: "sync" | "ignore";
 };
 
 /** Build the persisted root from current in-memory slices (currentRate is excluded). */
@@ -168,26 +175,28 @@ export const useCasinoStore = create<CasinoState>((set, get) => {
       set({ currentRate: null, tableStack: null });
     },
 
-    placeBet(gameId, amount) {
+    placeBet(gameId, amount, options) {
       const { user, tableStack } = get();
+      const syncTableStack = options?.tableStack !== "ignore";
       if (!user) return false;
       if (!Number.isFinite(amount) || amount <= 0) return false;
       if (user.chips < amount) return false; // insufficient wallet → no state change
-      if (tableStack !== null && tableStack < amount) return false; // session stack exhausted
+      if (syncTableStack && tableStack !== null && tableStack < amount) return false; // session stack exhausted
 
       const balanceAfter = user.chips - amount;
       const tx = makeTx("bet", gameId, -amount, balanceAfter);
       set((s) => ({
         user: s.user ? { ...s.user, chips: balanceAfter, updatedAt: new Date().toISOString() } : s.user,
         transactions: [...s.transactions, tx],
-        tableStack: s.tableStack === null ? null : s.tableStack - amount,
+        tableStack: syncTableStack && s.tableStack !== null ? s.tableStack - amount : s.tableStack,
       }));
       persist();
       return true;
     },
 
-    applyGameResult(partial) {
+    applyGameResult(partial, options) {
       const { user } = get();
+      const syncTableStack = options?.tableStack !== "ignore";
       if (!user) return null;
 
       const result: GameResult = {
@@ -217,7 +226,7 @@ export const useCasinoStore = create<CasinoState>((set, get) => {
         user: nextUser,
         results: [...s.results, result],
         transactions: winTx ? [...s.transactions, winTx] : s.transactions,
-        tableStack: s.tableStack === null ? null : s.tableStack + result.payout,
+        tableStack: syncTableStack && s.tableStack !== null ? s.tableStack + result.payout : s.tableStack,
       }));
       persist();
       return result;

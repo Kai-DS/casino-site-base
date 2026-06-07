@@ -1,59 +1,81 @@
 import type { Rate } from "@/types/casino";
-import { useVideoPoker } from "./useVideoPoker";
-import { PAYTABLE } from "../logic/payout";
+import type { RNG } from "@/types/card";
+import { useEffect } from "react";
+import { useVideoPoker, type ActionResult } from "./useVideoPoker";
+import type { DeckProvider } from "../logic/deckProvider";
+import { PAYTABLE, PAYOUT_LABELS, coinPayout, MAX_COINS } from "../logic/payout";
+import { CLASSIC_ROYAL_BONUS } from "../adapter";
 import { CardFace } from "@/components/casino/CardFace";
 import { Button } from "@/components/common/Button";
 import { formatChips } from "@/utils/format";
-import { MAX_COINS } from "@/constants/rates";
-import { CLASSIC_ROYAL_BONUS, ROYAL_MAX_BET_COINS } from "../adapter";
 import type { GameEconomy } from "@/games/shared/economy";
 
 type VideoPokerGameProps = {
   rate: Rate;
   economy: GameEconomy;
   onInsufficient: () => void;
+  initialTableStack?: number;
+  rng?: RNG;
+  deckProvider?: DeckProvider;
+  onSessionChange?: (session: VideoPokerSessionSnapshot) => void;
 };
 
-/** Per-coin payout for a paytable line at the current coin count (handles the Royal max-bet jump). */
-function payoutForLine(line: { label: string; multiplier: number }, rate: Rate, coins: number): number {
-  if (CLASSIC_ROYAL_BONUS && line.label === "Royal Flush" && coins >= MAX_COINS) {
-    return ROYAL_MAX_BET_COINS * rate.betMin;
-  }
-  return line.multiplier * rate.betMin * coins;
-}
+export type VideoPokerSessionSnapshot = {
+  tableStack: number;
+  canRebuy: boolean;
+  rebuy: (newTableStack: number) => ActionResult;
+};
 
-export function VideoPokerGame({ rate, economy, onInsufficient }: VideoPokerGameProps) {
-  const vp = useVideoPoker(rate, economy, onInsufficient);
-  const { hand, held, phase, lastLine, lastPayout, coins, bet, canDeal, canDraw, canChangeBet } = vp;
+export function VideoPokerGame({
+  rate,
+  economy,
+  onInsufficient,
+  initialTableStack,
+  rng,
+  deckProvider,
+  onSessionChange,
+}: VideoPokerGameProps) {
+  const vp = useVideoPoker(rate, economy, onInsufficient, {
+    initialTableStack,
+    rng,
+    deckProvider,
+  });
+  const { hand, held, phase, lastResult, winningCardIndexes, coins, bet, canDeal, canDraw, canChangeBet } = vp;
 
-  const won = lastPayout != null && lastPayout > 0;
+  useEffect(() => {
+    onSessionChange?.({
+      tableStack: vp.tableStack,
+      canRebuy: vp.canRebuy,
+      rebuy: vp.rebuy,
+    });
+  }, [onSessionChange, vp.canRebuy, vp.rebuy, vp.tableStack]);
+
+  const won = lastResult != null && lastResult.payout > 0;
   const maxBet = coins >= MAX_COINS;
 
   return (
     <div className="mx-auto w-full max-w-xl space-y-5">
-      {/* Paytable — shows the payout for the currently selected bet */}
+      {/* Paytable — coins paid for the currently selected bet */}
       <div className="overflow-hidden rounded-xl border border-gold-500/30 bg-black/40">
         <ul className="divide-y divide-white/5 p-2 text-sm">
-          {PAYTABLE.map((line) => {
-            const active = lastLine?.label === line.label;
-            const royalBoost = line.label === "Royal Flush" && maxBet && CLASSIC_ROYAL_BONUS;
+          {PAYTABLE.map((row) => {
+            const active = lastResult?.category === row.category;
+            const royalBoost = row.category === "royal_flush" && maxBet && CLASSIC_ROYAL_BONUS;
             return (
               <li
-                key={line.label}
+                key={row.category}
                 className={`flex items-center justify-between rounded px-2 py-1 ${
                   active ? "bg-gold-500/20 font-bold text-gold" : "text-white/70"
                 }`}
               >
                 <span className="flex items-center gap-1.5">
-                  {line.label}
+                  {row.label}
                   {royalBoost && (
-                    <span className="rounded bg-neon-red/20 px-1 text-[10px] font-bold text-neon-red">
-                      MAX
-                    </span>
+                    <span className="rounded bg-neon-red/20 px-1 text-[10px] font-bold text-neon-red">MAX</span>
                   )}
                 </span>
                 <span className={`tabular-nums ${royalBoost ? "text-neon-red" : "text-gold-400"}`}>
-                  {formatChips(payoutForLine(line, rate, coins))}
+                  {formatChips(coinPayout(row, coins, CLASSIC_ROYAL_BONUS) * rate.betMin)}
                 </span>
               </li>
             );
@@ -72,17 +94,22 @@ export function VideoPokerGame({ rate, economy, onInsufficient }: VideoPokerGame
             aria-label={held[i] ? `Held card ${i + 1}` : `Hold card ${i + 1}`}
             className="focus-ring w-[18%] max-w-[5.5rem] rounded-lg disabled:cursor-default"
           >
-            <CardFace card={card} faceDown={!card} held={held[i] ?? false} />
+            <CardFace
+              card={card}
+              faceDown={!card}
+              held={held[i] ?? false}
+              winning={phase === "result" && winningCardIndexes.includes(i)}
+            />
           </button>
         ))}
       </div>
 
       {/* Result line */}
       <div className="flex h-8 items-center justify-center">
-        {lastLine ? (
+        {lastResult ? (
           <span className={`font-display text-xl ${won ? "text-gold" : "text-white/40"}`}>
-            {lastLine.label}
-            {won && ` · +${formatChips(lastPayout)}`}
+            {PAYOUT_LABELS[lastResult.category]}
+            {won && ` · WIN +${formatChips(lastResult.payout)}`}
           </span>
         ) : (
           <span className="text-white/30">

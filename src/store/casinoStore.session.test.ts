@@ -66,6 +66,19 @@ describe("casinoStore — stack lockstep with chips", () => {
     expect(get().tableStack).toBe(2000 - 50 + 300);
   });
 
+  it("can move wallet chips without touching the store tableStack for hook-owned sessions", () => {
+    get().placeBet("videoPoker", 50, { tableStack: "ignore" });
+    expect(get().user!.chips).toBe(STARTING_CHIPS - 50);
+    expect(get().tableStack).toBe(2000);
+
+    get().applyGameResult(
+      { gameId: "videoPoker", bet: 50, payout: 300, profit: 250 },
+      { tableStack: "ignore" },
+    );
+    expect(get().user!.chips).toBe(STARTING_CHIPS - 50 + 300);
+    expect(get().tableStack).toBe(2000);
+  });
+
   it("rejects a bet the stack can't cover even when the wallet can", () => {
     get().buyIn(MID, 1000); // stack 1,000, wallet 10,000
     const ok = get().placeBet("videoPoker", 1500); // < wallet but > stack

@@ -1,136 +1,413 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Rate } from "@/types/casino";
-import type { Card } from "@/types/card";
-import { shuffledDeck } from "@/games/shared/poker/deck";
-import { rankFiveCardHand, type HandRank } from "@/games/shared/poker/handEvaluator";
-import { buildVideoPokerResult, videoPokerPayout } from "../adapter";
-import { classifyVideoPoker, type PayoutLine } from "../logic/payout";
-import { MAX_COINS } from "@/constants/rates";
+import type { Card, RNG } from "@/types/card";
+import { take } from "@/games/shared/poker/deck";
 import type { GameEconomy } from "@/games/shared/economy";
+import { clampBuyIn } from "@/constants/rates";
+import {
+  evaluatePayout,
+  getWinningCardIndexes,
+  MAX_COINS,
+  type CoinCount,
+  type PayoutResult,
+} from "../logic/payout";
+import {
+  createDefaultDeckProvider,
+  validateVideoPokerDeck,
+  VIDEO_POKER_HAND_SIZE,
+  type DeckProvider,
+} from "../logic/deckProvider";
+import { buildVideoPokerResult, CLASSIC_ROYAL_BONUS } from "../adapter";
 
-export type VideoPokerPhase = "ready" | "draw" | "result";
+export type VideoPokerPhase = "unseated" | "buyIn" | "ready" | "draw" | "result";
 
-const HAND_SIZE = 5;
+export type VideoPokerActionError =
+  | "ANIMATING"
+  | "NOT_SEATED"
+  | "INVALID_PHASE"
+  | "INVALID_BET"
+  | "INSUFFICIENT_CHIPS"
+  | "INSUFFICIENT_TABLE_STACK"
+  | "REBUY_REQUIRED"
+  | "DECK_EXHAUSTED"
+  | "DUPLICATE_CARD"
+  | "ECONOMY_FAILED";
 
-type UseVideoPoker = {
+export type ActionResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: VideoPokerActionError;
+      message: string;
+    };
+
+export type UseVideoPokerOptions = {
+  initialTableStack?: number;
+  rng?: RNG;
+  deckProvider?: DeckProvider;
+  classicRoyalBonus?: boolean;
+};
+
+export type UseVideoPoker = {
   hand: (Card | undefined)[];
+  cards: Card[];
   held: boolean[];
+  heldIndexes: Set<number>;
   phase: VideoPokerPhase;
-  lastRank: HandRank | null;
-  lastLine: PayoutLine | null;
-  lastPayout: number | null;
-  coins: number; // selected bet size, 1..MAX_COINS
-  bet: number; // coins × betMin
-  dealtBet: number; // bet locked for the current hand
+  lastResult: PayoutResult | null;
+  winningCardIndexes: number[];
+  coins: CoinCount;
+  coinCount: CoinCount;
+  bet: number;
+  currentBet: number;
+  lockedBet: number | null;
+  tableStack: number;
   canDeal: boolean;
   canDraw: boolean;
   canChangeBet: boolean;
-  setCoins: (n: number) => void;
-  betMax: () => void;
-  deal: () => void;
-  draw: () => void;
-  toggleHold: (index: number) => void;
+  canRebuy: boolean;
+  isAnimating: boolean;
+  actionError: VideoPokerActionError | null;
+  handId: number;
+  setCoins: (n: number) => ActionResult;
+  setCoinCount: (n: number) => ActionResult;
+  betMax: () => ActionResult;
+  maxBet: () => ActionResult;
+  deal: () => ActionResult;
+  draw: () => ActionResult;
+  toggleHold: (index: number) => ActionResult;
+  rebuy: (newTableStack: number) => ActionResult;
+  clearResult: () => void;
 };
 
+const HAND_SIZE = VIDEO_POKER_HAND_SIZE;
+const EMPTY_HAND: (Card | undefined)[] = Array(HAND_SIZE).fill(undefined);
+const EMPTY_HOLDS = Array(HAND_SIZE).fill(false);
+const OK: ActionResult = { ok: true };
+
+function initialStackFor(rate: Rate, chips: number, requested?: number): number {
+  if (chips < rate.buyInMin) return 0;
+  return clampBuyIn(rate, requested ?? rate.buyInMin, chips);
+}
+
+function phaseFor(rate: Rate, chips: number, tableStack: number): VideoPokerPhase {
+  if (tableStack >= rate.buyInMin) return "ready";
+  return chips >= rate.buyInMin ? "buyIn" : "unseated";
+}
+
 /**
- * Video Poker flow: pick bet (1..5 coins) → DEAL (placeBet) → Hold → DRAW (evaluate + settle).
- * Economy is injected, so the same logic runs against the store or the sandbox mock. Spec §9.2.
+ * Video Poker flow: buy-in/tableStack is hook-owned, while `economy` only moves the real chips.
+ * Per SPEC_VIDEO_POKER_v1.2 §11.1 and §25–§28.
  */
 export function useVideoPoker(
   rate: Rate,
   economy: GameEconomy,
   onInsufficient: () => void,
+  options: UseVideoPokerOptions = {},
 ): UseVideoPoker {
+  const { initialTableStack, rng, deckProvider, classicRoyalBonus = CLASSIC_ROYAL_BONUS } = options;
+
   const economyRef = useRef(economy);
   economyRef.current = economy;
 
-  const [coins, setCoinsState] = useState(1);
-  const [deck, setDeck] = useState<Card[]>([]);
-  const [hand, setHand] = useState<(Card | undefined)[]>(Array(HAND_SIZE).fill(undefined));
-  const [held, setHeld] = useState<boolean[]>(Array(HAND_SIZE).fill(false));
-  const [phase, setPhase] = useState<VideoPokerPhase>("ready");
-  const [lastRank, setLastRank] = useState<HandRank | null>(null);
-  const [lastLine, setLastLine] = useState<PayoutLine | null>(null);
-  const [lastPayout, setLastPayout] = useState<number | null>(null);
-  const [dealtBet, setDealtBet] = useState(rate.betMin);
+  const providerRef = useRef<DeckProvider>(deckProvider ?? createDefaultDeckProvider(rng));
+  providerRef.current = deckProvider ?? createDefaultDeckProvider(rng);
 
-  const bet = rate.betMin * coins;
-  const canChangeBet = phase !== "draw";
-  const canDeal = phase !== "draw" && economy.chips >= bet;
-  const canDraw = phase === "draw";
+  const startingStack = initialStackFor(rate, economy.chips, initialTableStack);
+  const [tableStack, setTableStackState] = useState(startingStack);
+  const tableStackRef = useRef(tableStack);
+  const setTableStack = useCallback((next: number | ((current: number) => number)) => {
+    const value = typeof next === "function" ? next(tableStackRef.current) : next;
+    tableStackRef.current = value;
+    setTableStackState(value);
+  }, []);
 
-  const setCoins = useCallback(
-    (n: number) => {
-      if (phase === "draw") return;
-      setCoinsState(Math.max(1, Math.min(MAX_COINS, Math.round(n))));
-    },
-    [phase],
+  const [coins, setCoinsState] = useState<CoinCount>(1);
+  const coinsRef = useRef<CoinCount>(coins);
+  const setCoinsInternal = useCallback((next: CoinCount) => {
+    coinsRef.current = next;
+    setCoinsState(next);
+  }, []);
+
+  const [deck, setDeckState] = useState<Card[]>([]);
+  const deckRef = useRef(deck);
+  const setDeck = useCallback((next: Card[]) => {
+    deckRef.current = next;
+    setDeckState(next);
+  }, []);
+
+  const [hand, setHandState] = useState<(Card | undefined)[]>(EMPTY_HAND);
+  const handRef = useRef(hand);
+  const setHand = useCallback((next: (Card | undefined)[]) => {
+    handRef.current = next;
+    setHandState(next);
+  }, []);
+
+  const [held, setHeldState] = useState<boolean[]>(EMPTY_HOLDS);
+  const heldRef = useRef(held);
+  const setHeld = useCallback((next: boolean[] | ((current: boolean[]) => boolean[])) => {
+    const value = typeof next === "function" ? next(heldRef.current) : next;
+    heldRef.current = value;
+    setHeldState(value);
+  }, []);
+
+  const [phase, setPhaseState] = useState<VideoPokerPhase>(
+    phaseFor(rate, economy.chips, startingStack),
   );
-  const betMax = useCallback(() => setCoins(MAX_COINS), [setCoins]);
+  const phaseRef = useRef(phase);
+  const setPhase = useCallback((next: VideoPokerPhase) => {
+    phaseRef.current = next;
+    setPhaseState(next);
+  }, []);
 
-  const deal = useCallback(() => {
-    if (phase === "draw") return;
-    const stake = rate.betMin * coins;
-    if (!economyRef.current.placeBet(stake)) {
-      onInsufficient();
-      return;
+  const [lastResult, setLastResult] = useState<PayoutResult | null>(null);
+  const [winningCardIndexes, setWinningCardIndexes] = useState<number[]>([]);
+  const [lockedBet, setLockedBetState] = useState<number | null>(null);
+  const lockedBetRef = useRef<number | null>(lockedBet);
+  const setLockedBet = useCallback((next: number | null) => {
+    lockedBetRef.current = next;
+    setLockedBetState(next);
+  }, []);
+  const lockedCoinCountRef = useRef<CoinCount | null>(null);
+
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [actionError, setActionError] = useState<VideoPokerActionError | null>(null);
+  const [handId, setHandId] = useState(0);
+  const handIdRef = useRef(0);
+  const isResolvingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isResolvingRef.current) return;
+    isResolvingRef.current = false;
+    setIsAnimating(false);
+  }, [phase, handId]);
+
+  const releaseResolving = useCallback(() => {
+    isResolvingRef.current = false;
+    setIsAnimating(false);
+  }, []);
+
+  const fail = useCallback((reason: VideoPokerActionError, message: string): ActionResult => {
+    setActionError(reason);
+    return { ok: false, reason, message };
+  }, []);
+
+  const succeed = useCallback((): ActionResult => {
+    setActionError(null);
+    return OK;
+  }, []);
+
+  const currentBet = rate.betMin * coins;
+  const canAct = !isAnimating && !isResolvingRef.current;
+  const canChangeBet = canAct && (phase === "ready" || phase === "result");
+  const canDeal =
+    canAct &&
+    (phase === "ready" || phase === "result") &&
+    economy.chips >= currentBet &&
+    tableStack >= currentBet;
+  const canDraw = canAct && phase === "draw";
+  const canRebuy = canAct && phase !== "draw" && economy.chips >= rate.buyInMin;
+
+  const cards = useMemo(
+    () => hand.filter((card): card is Card => card !== undefined),
+    [hand],
+  );
+  const heldIndexes = useMemo(() => {
+    const indexes = new Set<number>();
+    held.forEach((isHeld, index) => {
+      if (isHeld) indexes.add(index);
+    });
+    return indexes;
+  }, [held]);
+
+  const setCoinCount = useCallback(
+    (n: number): ActionResult => {
+      if (isAnimating || isResolvingRef.current) return fail("ANIMATING", "演出中です。");
+      if (phaseRef.current !== "ready" && phaseRef.current !== "result") {
+        return fail("INVALID_PHASE", "現在BETは変更できません。");
+      }
+      if (!Number.isInteger(n) || n < 1 || n > MAX_COINS) {
+        return fail("INVALID_BET", "BETが不正です。");
+      }
+      setCoinsInternal(n as CoinCount);
+      return succeed();
+    },
+    [fail, isAnimating, setCoinsInternal, succeed],
+  );
+
+  const maxBet = useCallback(() => setCoinCount(MAX_COINS), [setCoinCount]);
+
+  const deal = useCallback((): ActionResult => {
+    if (isAnimating || isResolvingRef.current) return fail("ANIMATING", "演出中です。");
+    const currentPhase = phaseRef.current;
+    if (currentPhase === "unseated" || currentPhase === "buyIn") {
+      return fail("NOT_SEATED", "まだ着席していません。");
     }
-    const fresh = shuffledDeck();
-    setHand(fresh.slice(0, HAND_SIZE));
-    setDeck(fresh.slice(HAND_SIZE));
-    setHeld(Array(HAND_SIZE).fill(false));
-    setLastRank(null);
-    setLastLine(null);
-    setLastPayout(null);
-    setDealtBet(stake);
-    setPhase("draw");
-  }, [phase, rate.betMin, coins, onInsufficient]);
+    if (currentPhase !== "ready" && currentPhase !== "result") {
+      return fail("INVALID_PHASE", "今はDEALできません。");
+    }
+
+    const stake = rate.betMin * coinsRef.current;
+    if (economyRef.current.chips < stake) {
+      onInsufficient();
+      return fail("INSUFFICIENT_CHIPS", "チップが不足しています。");
+    }
+    if (tableStackRef.current < stake) {
+      const reason = tableStackRef.current < rate.betMin ? "REBUY_REQUIRED" : "INSUFFICIENT_TABLE_STACK";
+      if (reason === "REBUY_REQUIRED") onInsufficient();
+      return fail(reason, "テーブル残高が不足しています。BETを下げるか、REBUYしてください。");
+    }
+
+    const provided = validateVideoPokerDeck(providerRef.current());
+    if (!provided.ok) return fail(provided.reason, provided.message);
+
+    isResolvingRef.current = true;
+    setIsAnimating(true);
+    try {
+      if (!economyRef.current.placeBet(stake)) {
+        releaseResolving();
+        return fail("ECONOMY_FAILED", "ベット処理に失敗しました。");
+      }
+
+      const { taken, rest } = take(provided.deck, HAND_SIZE);
+      handIdRef.current += 1;
+      setHandId(handIdRef.current);
+      setTableStack((stack) => stack - stake);
+      setLockedBet(stake);
+      lockedCoinCountRef.current = coinsRef.current;
+      setHand(taken);
+      setDeck(rest);
+      setHeld(EMPTY_HOLDS);
+      setLastResult(null);
+      setWinningCardIndexes([]);
+      setPhase("draw");
+      return succeed();
+    } catch {
+      releaseResolving();
+      return fail("ECONOMY_FAILED", "ベット処理に失敗しました。");
+    }
+  }, [fail, isAnimating, onInsufficient, rate.betMin, releaseResolving, setDeck, setHand, setHeld, setLockedBet, setPhase, setTableStack, succeed]);
 
   const toggleHold = useCallback(
-    (index: number) => {
-      if (phase !== "draw") return;
-      setHeld((prev) => prev.map((h, i) => (i === index ? !h : h)));
+    (index: number): ActionResult => {
+      if (isAnimating || isResolvingRef.current) return fail("ANIMATING", "演出中です。");
+      if (phaseRef.current !== "draw") return fail("INVALID_PHASE", "現在HOLDは変更できません。");
+      if (!Number.isInteger(index) || index < 0 || index >= HAND_SIZE) {
+        return fail("INVALID_BET", "カード位置が不正です。");
+      }
+      setHeld((prev) => prev.map((isHeld, i) => (i === index ? !isHeld : isHeld)));
+      return succeed();
     },
-    [phase],
+    [fail, isAnimating, setHeld, succeed],
   );
 
-  const draw = useCallback(() => {
-    if (phase !== "draw") return;
+  const draw = useCallback((): ActionResult => {
+    if (isAnimating || isResolvingRef.current) return fail("ANIMATING", "演出中です。");
+    if (phaseRef.current !== "draw") return fail("INVALID_PHASE", "今はDRAWできません。");
 
-    const rest = [...deck];
-    const finalHand = hand.map((card, i) => (held[i] ? card : rest.shift())) as Card[];
+    const replacements = heldRef.current.filter((isHeld) => !isHeld).length;
+    if (deckRef.current.length < replacements) {
+      return fail("DECK_EXHAUSTED", "交換用カードが不足しています。");
+    }
 
-    const rank = rankFiveCardHand(finalHand);
-    const line = classifyVideoPoker(rank);
-    const payout = videoPokerPayout(rank, rate, dealtBet);
+    isResolvingRef.current = true;
+    setIsAnimating(true);
+    try {
+      const rest = deckRef.current.slice();
+      const finalHand: Card[] = [];
+      for (let i = 0; i < HAND_SIZE; i++) {
+        const current = handRef.current[i];
+        if (heldRef.current[i] && current) {
+          finalHand.push(current);
+          continue;
+        }
+        const replacement = rest.shift();
+        if (!replacement) {
+          releaseResolving();
+          return fail("DECK_EXHAUSTED", "交換用カードが不足しています。");
+        }
+        finalHand.push(replacement);
+      }
 
-    economyRef.current.settle(buildVideoPokerResult(rank, rate, dealtBet));
+      const coinCount = lockedCoinCountRef.current ?? coinsRef.current;
+      const result = evaluatePayout({
+        cards: finalHand,
+        coinCount,
+        betMin: rate.betMin,
+        classicRoyalBonus,
+      });
+      const settledBet = lockedBetRef.current ?? rate.betMin * coinCount;
+      economyRef.current.settle(buildVideoPokerResult(settledBet, result));
 
-    setHand(finalHand);
-    setDeck(rest);
-    setLastRank(rank);
-    setLastLine(line);
-    setLastPayout(payout);
-    setPhase("result");
-  }, [phase, deck, hand, held, rate, dealtBet]);
+      setHand(finalHand);
+      setDeck(rest);
+      setLastResult(result);
+      setWinningCardIndexes(getWinningCardIndexes(finalHand, result));
+      setTableStack((stack) => stack + result.payout);
+      setLockedBet(null);
+      lockedCoinCountRef.current = null;
+      setPhase("result");
+      return succeed();
+    } catch {
+      releaseResolving();
+      return fail("ECONOMY_FAILED", "精算処理に失敗しました。");
+    }
+  }, [classicRoyalBonus, fail, isAnimating, rate.betMin, releaseResolving, setDeck, setHand, setLockedBet, setPhase, setTableStack, succeed]);
+
+  const rebuy = useCallback(
+    (newTableStack: number): ActionResult => {
+      if (isAnimating || isResolvingRef.current) return fail("ANIMATING", "演出中です。");
+      if (phaseRef.current === "draw") return fail("INVALID_PHASE", "ハンド中はREBUYできません。");
+      if (economyRef.current.chips < rate.buyInMin) {
+        onInsufficient();
+        return fail("INSUFFICIENT_CHIPS", "チップが不足しています。");
+      }
+      const max = Math.min(rate.buyInMax, economyRef.current.chips);
+      if (!Number.isFinite(newTableStack) || newTableStack < rate.buyInMin || newTableStack > max) {
+        return fail("INVALID_BET", "REBUY額が不正です。");
+      }
+      setTableStack(newTableStack);
+      if (phaseRef.current === "buyIn") setPhase("ready");
+      return succeed();
+    },
+    [fail, isAnimating, onInsufficient, rate.buyInMax, rate.buyInMin, setPhase, setTableStack, succeed],
+  );
+
+  const clearResult = useCallback(() => {
+    setLastResult(null);
+    setWinningCardIndexes([]);
+    if (phaseRef.current === "result") setPhase("ready");
+  }, [setPhase]);
 
   return {
     hand,
+    cards,
     held,
+    heldIndexes,
     phase,
-    lastRank,
-    lastLine,
-    lastPayout,
+    lastResult,
+    winningCardIndexes,
     coins,
-    bet,
-    dealtBet,
+    coinCount: coins,
+    bet: currentBet,
+    currentBet,
+    lockedBet,
+    tableStack,
     canDeal,
     canDraw,
     canChangeBet,
-    setCoins,
-    betMax,
+    canRebuy,
+    isAnimating,
+    actionError,
+    handId,
+    setCoins: setCoinCount,
+    setCoinCount,
+    betMax: maxBet,
+    maxBet,
     deal,
     draw,
     toggleHold,
+    rebuy,
+    clearResult,
   };
 }

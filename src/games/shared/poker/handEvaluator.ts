@@ -1,42 +1,44 @@
-// games/shared/poker/handEvaluator.ts — pure 5-card ranking shared across all poker games.
-// Video Poker uses rankFiveCardHand; Hold'em/Omaha will reuse it via bestHand (spec §9.4).
+// games/shared/poker/handEvaluator.ts — pure 5-card ranking shared by all poker games.
+// Per SPEC_VIDEO_POKER_v1.2 §5 / 付録A. Video Poker's Jacks-or-Better check lives in payout.ts;
+// this module only returns `one_pair` (Hold'em/Omaha reuse via bestHand).
 import type { Card } from "@/types/card";
-import { RANK_VALUE } from "@/types/card";
 
-export const HAND_CATEGORY = {
-  HighCard: 0,
-  Pair: 1,
-  TwoPair: 2,
-  ThreeOfAKind: 3,
-  Straight: 4,
-  Flush: 5,
-  FullHouse: 6,
-  FourOfAKind: 7,
-  StraightFlush: 8,
-  RoyalFlush: 9,
-} as const;
+export type HandCategory =
+  | "royal_flush"
+  | "straight_flush"
+  | "four_of_a_kind"
+  | "full_house"
+  | "flush"
+  | "straight"
+  | "three_of_a_kind"
+  | "two_pair"
+  | "one_pair"
+  | "high_card";
 
-export type HandCategory = (typeof HAND_CATEGORY)[keyof typeof HAND_CATEGORY];
-
-export const HAND_CATEGORY_NAME: Record<HandCategory, string> = {
-  [HAND_CATEGORY.HighCard]: "High Card",
-  [HAND_CATEGORY.Pair]: "Pair",
-  [HAND_CATEGORY.TwoPair]: "Two Pair",
-  [HAND_CATEGORY.ThreeOfAKind]: "Three of a Kind",
-  [HAND_CATEGORY.Straight]: "Straight",
-  [HAND_CATEGORY.Flush]: "Flush",
-  [HAND_CATEGORY.FullHouse]: "Full House",
-  [HAND_CATEGORY.FourOfAKind]: "Four of a Kind",
-  [HAND_CATEGORY.StraightFlush]: "Straight Flush",
-  [HAND_CATEGORY.RoyalFlush]: "Royal Flush",
-};
-
-export type HandRank = {
+export interface HandRank {
   category: HandCategory;
-  name: string;
-  /** Descending tiebreak values; compared lexicographically within a category. */
+  // Kicker comparison: ranks that decide the hand, strongest first.
+  // e.g. one_pair → tiebreak[0] = pair rank, then kickers descending.
   tiebreak: number[];
+}
+
+/** Strength order (higher = better). */
+const CATEGORY_ORDER: Record<HandCategory, number> = {
+  high_card: 0,
+  one_pair: 1,
+  two_pair: 2,
+  three_of_a_kind: 3,
+  straight: 4,
+  flush: 5,
+  full_house: 6,
+  four_of_a_kind: 7,
+  straight_flush: 8,
+  royal_flush: 9,
 };
+
+export function categoryOrder(category: HandCategory): number {
+  return CATEGORY_ORDER[category];
+}
 
 /** Rank exactly five cards. Throws if not given 5. */
 export function rankFiveCardHand(cards: readonly Card[]): HandRank {
@@ -44,15 +46,16 @@ export function rankFiveCardHand(cards: readonly Card[]): HandRank {
     throw new Error(`rankFiveCardHand expects 5 cards, got ${cards.length}`);
   }
 
-  const values = cards.map((c) => RANK_VALUE[c.rank]).sort((a, b) => b - a);
+  const values = cards.map((c) => c.rank).sort((a, b) => b - a);
   const isFlush = cards.every((c) => c.suit === cards[0]!.suit);
 
-  // Group by value: [{ value, count }], sorted by count desc then value desc.
+  // Group by rank: [{ value, count }] sorted by count desc then value desc.
   const counts = new Map<number, number>();
   for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
   const groups = [...counts.entries()]
     .map(([value, count]) => ({ value, count }))
     .sort((a, b) => b.count - a.count || b.value - a.value);
+  const counted = groups.map((g) => g.value);
 
   // Straight detection (5 distinct, consecutive) incl. the wheel A-2-3-4-5.
   const uniqAsc = [...counts.keys()].sort((a, b) => a - b);
@@ -68,32 +71,26 @@ export function rankFiveCardHand(cards: readonly Card[]): HandRank {
     }
   }
 
-  const make = (category: HandCategory, tiebreak: number[]): HandRank => ({
-    category,
-    name: HAND_CATEGORY_NAME[category],
-    tiebreak,
-  });
-
-  const counted = groups.map((g) => g.value); // values ordered by group strength
+  const make = (category: HandCategory, tiebreak: number[]): HandRank => ({ category, tiebreak });
 
   if (isStraight && isFlush) {
     return straightHigh === 14
-      ? make(HAND_CATEGORY.RoyalFlush, [14])
-      : make(HAND_CATEGORY.StraightFlush, [straightHigh]);
+      ? make("royal_flush", [14])
+      : make("straight_flush", [straightHigh]);
   }
-  if (groups[0]!.count === 4) return make(HAND_CATEGORY.FourOfAKind, counted);
-  if (groups[0]!.count === 3 && groups[1]?.count === 2) return make(HAND_CATEGORY.FullHouse, counted);
-  if (isFlush) return make(HAND_CATEGORY.Flush, values);
-  if (isStraight) return make(HAND_CATEGORY.Straight, [straightHigh]);
-  if (groups[0]!.count === 3) return make(HAND_CATEGORY.ThreeOfAKind, counted);
-  if (groups[0]!.count === 2 && groups[1]?.count === 2) return make(HAND_CATEGORY.TwoPair, counted);
-  if (groups[0]!.count === 2) return make(HAND_CATEGORY.Pair, counted);
-  return make(HAND_CATEGORY.HighCard, values);
+  if (groups[0]!.count === 4) return make("four_of_a_kind", counted);
+  if (groups[0]!.count === 3 && groups[1]?.count === 2) return make("full_house", counted);
+  if (isFlush) return make("flush", values);
+  if (isStraight) return make("straight", [straightHigh]);
+  if (groups[0]!.count === 3) return make("three_of_a_kind", counted);
+  if (groups[0]!.count === 2 && groups[1]?.count === 2) return make("two_pair", counted);
+  if (groups[0]!.count === 2) return make("one_pair", counted);
+  return make("high_card", values);
 }
 
 /** Positive if a beats b, negative if b beats a, 0 if identical strength. */
 export function compareHandRank(a: HandRank, b: HandRank): number {
-  if (a.category !== b.category) return a.category - b.category;
+  if (a.category !== b.category) return CATEGORY_ORDER[a.category] - CATEGORY_ORDER[b.category];
   const len = Math.max(a.tiebreak.length, b.tiebreak.length);
   for (let i = 0; i < len; i++) {
     const diff = (a.tiebreak[i] ?? 0) - (b.tiebreak[i] ?? 0);
@@ -102,7 +99,7 @@ export function compareHandRank(a: HandRank, b: HandRank): number {
   return 0;
 }
 
-/** All k-combinations of an array (indices preserved). */
+/** All k-combinations of an array (order preserved). */
 export function combinations<T>(items: readonly T[], k: number): T[][] {
   const result: T[][] = [];
   const combo: T[] = [];
@@ -125,9 +122,9 @@ export type BestHand = { rank: HandRank; cards: Card[] };
 
 /**
  * Best 5-card hand.
- *  - holdem: best 5 of the 7 available (C(7,5)=21).
+ *  - holdem: best 5 of 7 (C(7,5)=21).
  *  - omaha:  exactly 2 hole + 3 community (C(4,2)×C(5,3)=60).
- * Only the combination generator differs; rankFiveCardHand is shared (spec §9.4).
+ * Only the combination generator differs; rankFiveCardHand is shared (spec §5).
  */
 export function bestHand(
   hole: readonly Card[],

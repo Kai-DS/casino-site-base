@@ -8,7 +8,7 @@ import { VideoPokerPage } from "@/pages/games/VideoPokerPage";
 import { ComingSoonPage } from "@/pages/games/ComingSoonPage";
 import { AppShell } from "@/components/layout/AppShell";
 import { RouteErrorBoundary } from "@/components/layout/RouteErrorBoundary";
-import { VideoPokerSandbox } from "@/sandbox/VideoPokerSandbox";
+import { VideoPokerSandbox } from "@/sandbox/videoPoker/VideoPokerSandbox";
 
 // URLs are kebab-case; GameIds are camelCase — the mapping lives in constants/games.ts (spec §6).
 export const router = createBrowserRouter([

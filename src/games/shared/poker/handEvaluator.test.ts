@@ -1,112 +1,98 @@
 import { describe, it, expect } from "vitest";
 import type { Card, Suit, Rank } from "@/types/card";
-import {
-  rankFiveCardHand,
-  compareHandRank,
-  HAND_CATEGORY,
-  combinations,
-} from "./handEvaluator";
+import { cardId } from "@/types/card";
+import { rankFiveCardHand, compareHandRank, combinations } from "./handEvaluator";
 
-const c = (rank: Rank, suit: Suit): Card => ({ rank, suit });
-const S = "spade",
-  H = "heart",
-  D = "diamond",
-  Cl = "club";
+const c = (rank: Rank, suit: Suit): Card => ({ id: cardId(suit, rank), suit, rank });
+const S = "spades",
+  H = "hearts",
+  D = "diamonds",
+  C = "clubs";
 
 describe("rankFiveCardHand — categories", () => {
   it("royal flush", () => {
-    const hand = [c("10", S), c("J", S), c("Q", S), c("K", S), c("A", S)];
-    expect(rankFiveCardHand(hand).category).toBe(HAND_CATEGORY.RoyalFlush);
+    expect(rankFiveCardHand([c(10, S), c(11, S), c(12, S), c(13, S), c(14, S)]).category).toBe("royal_flush");
   });
 
   it("straight flush (king-high)", () => {
-    const hand = [c("9", H), c("10", H), c("J", H), c("Q", H), c("K", H)];
-    const r = rankFiveCardHand(hand);
-    expect(r.category).toBe(HAND_CATEGORY.StraightFlush);
+    const r = rankFiveCardHand([c(9, H), c(10, H), c(11, H), c(12, H), c(13, H)]);
+    expect(r.category).toBe("straight_flush");
     expect(r.tiebreak[0]).toBe(13);
   });
 
   it("four of a kind", () => {
-    const hand = [c("9", H), c("9", S), c("9", D), c("9", Cl), c("K", H)];
-    expect(rankFiveCardHand(hand).category).toBe(HAND_CATEGORY.FourOfAKind);
+    expect(rankFiveCardHand([c(9, H), c(9, S), c(9, D), c(9, C), c(13, H)]).category).toBe("four_of_a_kind");
   });
 
   it("full house", () => {
-    const hand = [c("9", H), c("9", S), c("9", D), c("K", Cl), c("K", H)];
-    expect(rankFiveCardHand(hand).category).toBe(HAND_CATEGORY.FullHouse);
+    expect(rankFiveCardHand([c(9, H), c(9, S), c(9, D), c(13, C), c(13, H)]).category).toBe("full_house");
   });
 
   it("flush", () => {
-    const hand = [c("2", D), c("5", D), c("9", D), c("J", D), c("K", D)];
-    expect(rankFiveCardHand(hand).category).toBe(HAND_CATEGORY.Flush);
+    expect(rankFiveCardHand([c(2, D), c(5, D), c(9, D), c(11, D), c(13, D)]).category).toBe("flush");
   });
 
   it("straight (normal)", () => {
-    const hand = [c("5", D), c("6", S), c("7", H), c("8", Cl), c("9", D)];
-    const r = rankFiveCardHand(hand);
-    expect(r.category).toBe(HAND_CATEGORY.Straight);
+    const r = rankFiveCardHand([c(5, D), c(6, S), c(7, H), c(8, C), c(9, D)]);
+    expect(r.category).toBe("straight");
     expect(r.tiebreak[0]).toBe(9);
   });
 
-  it("straight (wheel A-2-3-4-5, ace low → five-high)", () => {
-    const hand = [c("A", D), c("2", S), c("3", H), c("4", Cl), c("5", D)];
-    const r = rankFiveCardHand(hand);
-    expect(r.category).toBe(HAND_CATEGORY.Straight);
+  it("wheel A-2-3-4-5 is a five-high straight", () => {
+    const r = rankFiveCardHand([c(14, D), c(2, S), c(3, H), c(4, C), c(5, D)]);
+    expect(r.category).toBe("straight");
     expect(r.tiebreak[0]).toBe(5);
   });
 
-  it("A-K-Q-J-10 is a straight, not a wheel", () => {
-    const hand = [c("A", D), c("K", S), c("Q", H), c("J", Cl), c("10", D)];
-    expect(rankFiveCardHand(hand).tiebreak[0]).toBe(14);
+  it("A-K-Q-J-10 is an ace-high straight (not wheel)", () => {
+    expect(rankFiveCardHand([c(14, D), c(13, S), c(12, H), c(11, C), c(10, D)]).tiebreak[0]).toBe(14);
   });
 
   it("three of a kind", () => {
-    const hand = [c("9", H), c("9", S), c("9", D), c("2", Cl), c("K", H)];
-    expect(rankFiveCardHand(hand).category).toBe(HAND_CATEGORY.ThreeOfAKind);
+    expect(rankFiveCardHand([c(9, H), c(9, S), c(9, D), c(2, C), c(13, H)]).category).toBe("three_of_a_kind");
   });
 
   it("two pair", () => {
-    const hand = [c("9", H), c("9", S), c("K", D), c("K", Cl), c("3", H)];
-    expect(rankFiveCardHand(hand).category).toBe(HAND_CATEGORY.TwoPair);
+    expect(rankFiveCardHand([c(9, H), c(9, S), c(13, D), c(13, C), c(3, H)]).category).toBe("two_pair");
   });
 
   it("one pair", () => {
-    const hand = [c("9", H), c("9", S), c("K", D), c("4", Cl), c("3", H)];
-    expect(rankFiveCardHand(hand).category).toBe(HAND_CATEGORY.Pair);
+    const r = rankFiveCardHand([c(9, H), c(9, S), c(13, D), c(4, C), c(3, H)]);
+    expect(r.category).toBe("one_pair");
+    expect(r.tiebreak[0]).toBe(9); // pair rank first (payout relies on this)
   });
 
   it("high card", () => {
-    const hand = [c("2", H), c("5", S), c("9", D), c("J", Cl), c("K", H)];
-    expect(rankFiveCardHand(hand).category).toBe(HAND_CATEGORY.HighCard);
+    expect(rankFiveCardHand([c(2, H), c(5, S), c(9, D), c(11, C), c(13, H)]).category).toBe("high_card");
   });
 
   it("throws on wrong card count", () => {
-    expect(() => rankFiveCardHand([c("2", H)])).toThrow();
+    expect(() => rankFiveCardHand([c(2, H)])).toThrow();
   });
 });
 
-describe("compareHandRank — ordering", () => {
+describe("compareHandRank", () => {
   it("higher category wins", () => {
-    const flush = rankFiveCardHand([c("2", D), c("5", D), c("9", D), c("J", D), c("K", D)]);
-    const straight = rankFiveCardHand([c("5", D), c("6", S), c("7", H), c("8", Cl), c("9", D)]);
+    const flush = rankFiveCardHand([c(2, D), c(5, D), c(9, D), c(11, D), c(13, D)]);
+    const straight = rankFiveCardHand([c(5, D), c(6, S), c(7, H), c(8, C), c(9, D)]);
     expect(compareHandRank(flush, straight)).toBeGreaterThan(0);
   });
 
-  it("same category breaks by tiebreak (higher pair wins)", () => {
-    const aces = rankFiveCardHand([c("A", H), c("A", S), c("K", D), c("4", Cl), c("3", H)]);
-    const kings = rankFiveCardHand([c("K", H), c("K", S), c("Q", D), c("4", Cl), c("3", H)]);
+  it("same category breaks by tiebreak (aces over kings)", () => {
+    const aces = rankFiveCardHand([c(14, H), c(14, S), c(13, D), c(4, C), c(3, H)]);
+    const kings = rankFiveCardHand([c(13, H), c(13, S), c(12, D), c(4, C), c(3, H)]);
     expect(compareHandRank(aces, kings)).toBeGreaterThan(0);
   });
 
   it("identical strength compares equal", () => {
-    const a = rankFiveCardHand([c("A", H), c("A", S), c("K", D), c("4", Cl), c("3", H)]);
-    const b = rankFiveCardHand([c("A", D), c("A", Cl), c("K", S), c("4", H), c("3", S)]);
+    const a = rankFiveCardHand([c(14, H), c(14, S), c(13, D), c(4, C), c(3, H)]);
+    const b = rankFiveCardHand([c(14, D), c(14, C), c(13, S), c(4, H), c(3, S)]);
     expect(compareHandRank(a, b)).toBe(0);
   });
 });
 
 describe("combinations", () => {
-  it("C(7,5) = 21 and C(5,3) = 10", () => {
+  it("C(7,5)=21 and C(5,3)=10", () => {
     expect(combinations([1, 2, 3, 4, 5, 6, 7], 5)).toHaveLength(21);
     expect(combinations([1, 2, 3, 4, 5], 3)).toHaveLength(10);
   });

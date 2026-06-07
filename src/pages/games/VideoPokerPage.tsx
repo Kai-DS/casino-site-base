@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useCasinoStore } from "@/store/casinoStore";
-import { VideoPokerGame } from "@/games/videoPoker/components/VideoPokerGame";
+import {
+  VideoPokerGame,
+  type VideoPokerSessionSnapshot,
+} from "@/games/videoPoker/components/VideoPokerGame";
 import { useStoreEconomy } from "@/games/shared/useStoreEconomy";
 import { RescueModal } from "@/components/casino/RescueModal";
 import { RebuyModal } from "@/components/casino/RebuyModal";
@@ -13,17 +16,28 @@ export function VideoPokerPage() {
   const user = useCasinoStore((s) => s.user);
   const rate = useCasinoStore((s) => s.currentRate);
   const stack = useCasinoStore((s) => s.tableStack);
-  const rebuy = useCasinoStore((s) => s.rebuy);
   const leaveTable = useCasinoStore((s) => s.leaveTable);
   const claimDailyBonus = useCasinoStore((s) => s.claimDailyBonus);
   const rescue = useCasinoStore((s) => s.rescue);
   const canClaimDailyBonus = useCasinoStore((s) => s.canClaimDailyBonus);
   const canRescue = useCasinoStore((s) => s.canRescue);
   const rescueCooldownMinutes = useCasinoStore((s) => s.rescueCooldownMinutes);
-  const economy = useStoreEconomy("videoPoker");
+  const economy = useStoreEconomy("videoPoker", { syncTableStack: false });
 
   const [rescueOpen, setRescueOpen] = useState(false);
   const [rebuyOpen, setRebuyOpen] = useState(false);
+  const [runtimeStack, setRuntimeStack] = useState<number | null>(stack);
+  const rebuyActionRef = useRef<VideoPokerSessionSnapshot["rebuy"] | null>(null);
+
+  useEffect(() => {
+    setRuntimeStack(stack);
+    rebuyActionRef.current = null;
+  }, [rate?.id, stack]);
+
+  const onSessionChange = useCallback((session: VideoPokerSessionSnapshot) => {
+    rebuyActionRef.current = session.rebuy;
+    setRuntimeStack((current) => (current === session.tableStack ? current : session.tableStack));
+  }, []);
 
   if (!rate) return <Navigate to="/lobby" replace />;
 
@@ -50,18 +64,30 @@ export function VideoPokerPage() {
 
       <h1 className="text-center font-display text-3xl text-gold">Video Poker</h1>
 
-      <StackBar rate={rate} chips={chips} stack={stack} onRebuy={() => setRebuyOpen(true)} />
+      <StackBar rate={rate} chips={chips} stack={runtimeStack} onRebuy={() => setRebuyOpen(true)} />
 
-      <VideoPokerGame rate={rate} economy={economy} onInsufficient={onInsufficient} />
+      <VideoPokerGame
+        rate={rate}
+        economy={economy}
+        initialTableStack={runtimeStack ?? stack ?? undefined}
+        onInsufficient={onInsufficient}
+        onSessionChange={onSessionChange}
+      />
 
       <RebuyModal
         open={rebuyOpen}
         rate={rate}
         chips={chips}
-        stack={stack}
+        stack={runtimeStack}
         onClose={() => setRebuyOpen(false)}
         onRebuy={(amount) => {
-          if (rebuy(amount)) setRebuyOpen(false);
+          const result = rebuyActionRef.current?.(amount);
+          if (result?.ok) {
+            setRebuyOpen(false);
+          } else if (result?.reason === "INSUFFICIENT_CHIPS") {
+            setRebuyOpen(false);
+            setRescueOpen(true);
+          }
         }}
       />
 
