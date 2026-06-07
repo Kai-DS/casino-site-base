@@ -8,7 +8,6 @@ import {
 import { useStoreEconomy } from "@/games/shared/useStoreEconomy";
 import { RescueModal } from "@/components/casino/RescueModal";
 import { RebuyModal } from "@/components/casino/RebuyModal";
-import { StackBar } from "@/components/casino/StackBar";
 import { Button } from "@/components/common/Button";
 
 export function VideoPokerPage() {
@@ -54,25 +53,30 @@ export function VideoPokerPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+      {/* Compact top bar */}
+      <div className="flex shrink-0 items-center justify-between">
         <Button variant="ghost" size="sm" onClick={exit}>
           ← Lobby
         </Button>
-        <span className="font-display text-gold">{rate.label}</span>
+        <div className="flex items-center gap-2">
+          <span className="font-display text-sm text-gold sm:text-base">Video Poker · {rate.label}</span>
+          <Button variant="ghost" size="sm" onClick={() => setRebuyOpen(true)}>
+            Re-buy
+          </Button>
+        </div>
       </div>
 
-      <h1 className="text-center font-display text-3xl text-gold">Video Poker</h1>
-
-      <StackBar rate={rate} chips={chips} stack={runtimeStack} onRebuy={() => setRebuyOpen(true)} />
-
-      <VideoPokerGame
-        rate={rate}
-        economy={economy}
-        initialTableStack={runtimeStack ?? stack ?? undefined}
-        onInsufficient={onInsufficient}
-        onSessionChange={onSessionChange}
-      />
+      {/* Cabinet fills the remaining height */}
+      <div className="min-h-0 flex-1">
+        <VideoPokerGame
+          rate={rate}
+          economy={economy}
+          initialTableStack={runtimeStack ?? stack ?? undefined}
+          onInsufficient={onInsufficient}
+          onSessionChange={onSessionChange}
+        />
+      </div>
 
       <RebuyModal
         open={rebuyOpen}

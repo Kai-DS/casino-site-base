@@ -8,39 +8,29 @@ type VideoPokerStatusPanelProps = {
   lastWin: number | null;
 };
 
-function Stat({
-  label,
-  value,
-  tone = "white",
-}: {
-  label: string;
-  value: string;
-  tone?: "white" | "gold" | "neon" | "green";
-}) {
-  const toneClass =
-    tone === "gold"
-      ? "text-gold"
-      : tone === "neon"
-        ? "text-neon-blue"
-        : tone === "green"
-          ? "text-green-400"
-          : "text-white";
+function Meter({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className="flex flex-col items-center px-3">
-      <span className="text-[10px] uppercase tracking-wider text-white/40">{label}</span>
-      <span className={`text-base font-bold tabular-nums ${toneClass}`}>{value}</span>
+    <div className="flex flex-col items-center px-2 sm:px-4">
+      <span className="text-[9px] uppercase tracking-[0.2em] text-neon-green/50">{label}</span>
+      <span
+        className={`vp-meter font-display text-lg leading-tight sm:text-2xl ${
+          accent ? "text-gold-400 [text-shadow:0_0_8px_rgba(240,199,94,0.6)]" : ""
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }
 
-/** Always-visible session figures (spec §12.1, §14 StatusPanel). */
+/** LCD credit meter across the top of the screen (spec §12.1). */
 export function VideoPokerStatusPanel({ chips, tableStack, bet, coins, lastWin }: VideoPokerStatusPanelProps) {
   return (
-    <div className="flex items-center justify-between divide-x divide-white/10 rounded-xl border border-gold-500/20 bg-black/50 py-2">
-      <Stat label="Wallet" value={formatChips(chips)} tone="gold" />
-      <Stat label="Table" value={formatChips(tableStack)} tone="neon" />
-      <Stat label="Bet" value={`${formatChips(bet)} · ${coins}c`} />
-      <Stat label="Last Win" value={lastWin && lastWin > 0 ? `+${formatChips(lastWin)}` : "—"} tone="green" />
+    <div className="flex items-center justify-between rounded-lg border border-neon-green/20 bg-black/40 px-2 py-1.5">
+      <Meter label="Credits" value={formatChips(chips)} />
+      <Meter label="Table" value={formatChips(tableStack)} />
+      <Meter label={`Bet · ${coins}c`} value={formatChips(bet)} />
+      <Meter label="Win" value={lastWin && lastWin > 0 ? formatChips(lastWin) : "—"} accent={!!lastWin && lastWin > 0} />
     </div>
   );
 }

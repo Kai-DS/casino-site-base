@@ -17,8 +17,8 @@ type VideoPokerCardProps = {
 
 function CardBack() {
   return (
-    <div className="flex h-full w-full items-center justify-center rounded-lg border border-neon-blue/40 bg-gradient-to-br from-neon-deep to-black">
-      <div className="h-[70%] w-[70%] rounded border border-neon-blue/30 bg-[repeating-linear-gradient(45deg,rgba(40,215,255,0.12)_0,rgba(40,215,255,0.12)_4px,transparent_4px,transparent_8px)]" />
+    <div className="flex h-full w-full items-center justify-center rounded-lg border border-neon-green/40 bg-gradient-to-br from-neon-deepgreen to-black">
+      <div className="h-[70%] w-[70%] rounded border border-neon-green/30 bg-[repeating-linear-gradient(45deg,rgba(47,224,138,0.14)_0,rgba(47,224,138,0.14)_4px,transparent_4px,transparent_8px)]" />
     </div>
   );
 }
@@ -42,10 +42,18 @@ export function VideoPokerCard({
       onClick={onToggleHold}
       aria-pressed={held}
       aria-label={held ? `Release card ${ariaIndex}` : `Hold card ${ariaIndex}`}
-      className={`focus-ring perspective-card w-full rounded-lg transition-transform duration-200 disabled:cursor-default ${
-        held ? "-translate-y-1.5" : ""
+      className={`focus-ring perspective-card relative w-full rounded-lg transition-transform duration-200 disabled:cursor-default ${
+        held ? "-translate-y-2" : ""
       }`}
     >
+      {/* HOLD badge (outside the flip so it doesn't rotate) */}
+      <span
+        className={`pointer-events-none absolute -top-2 left-1/2 z-10 -translate-x-1/2 rounded-sm border border-neon-green bg-neon-deepgreen px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-neon-green shadow-neongreen transition-opacity ${
+          held ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        Hold
+      </span>
       <div key={dealKey} className="vp-card-in" style={{ animationDelay: `${dealDelayMs}ms` }}>
         <div className={`vp-flip relative aspect-[3/4.2] w-full ${faceUp ? "is-face-up" : ""}`}>
           {/* Front */}

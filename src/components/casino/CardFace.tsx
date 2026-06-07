@@ -24,16 +24,16 @@ export function CardFace({
   if (faceDown || !card) {
     return (
       <div
-        className={`aspect-[3/4.2] w-full rounded-lg border border-neon-blue/40 bg-gradient-to-br from-neon-deep to-black ${className}`}
+        className={`aspect-[3/4.2] w-full rounded-lg border border-neon-green/40 bg-gradient-to-br from-neon-deepgreen to-black ${className}`}
         aria-label="face-down card"
       >
-        <div className="flex h-full items-center justify-center text-neon-blue/30">★</div>
+        <div className="flex h-full items-center justify-center text-neon-green/30">★</div>
       </div>
     );
   }
 
   const ink = RED_SUITS.includes(card.suit) ? "text-red-600" : "text-neutral-900";
-  const ring = winning ? "ring-2 ring-gold-400" : held ? "ring-2 ring-neon-blue" : "ring-black/10";
+  const ring = winning ? "ring-2 ring-gold-400" : held ? "ring-2 ring-neon-green" : "ring-black/10";
 
   return (
     <div
@@ -47,7 +47,7 @@ export function CardFace({
         <span className="text-3xl">{SUIT_GLYPH[card.suit]}</span>
       </div>
       {held && showHoldLabel && (
-        <span className="absolute inset-x-0 bottom-1 text-center text-[10px] font-bold uppercase text-neon-blue">
+        <span className="absolute inset-x-0 bottom-1 text-center text-[10px] font-bold uppercase text-neon-green">
           Hold
         </span>
       )}

@@ -23,10 +23,10 @@ export function AppShell() {
   return (
     <div className="casino-backdrop flex min-h-screen flex-col">
       <AppHeader />
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6">
+      <main className="mx-auto flex w-full min-h-0 max-w-6xl flex-1 flex-col px-4 py-4">
         <Outlet />
       </main>
-      <footer className="px-4 py-4 text-center text-[11px] text-white/35">
+      <footer className="shrink-0 px-4 py-2 text-center text-[11px] text-white/35">
         CASINO HUB · Free simulation only — no real money, no cashout.
       </footer>
     </div>

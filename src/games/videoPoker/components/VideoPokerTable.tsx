@@ -100,10 +100,10 @@ export function VideoPokerTable({
   const interactive = phase === "draw" && !animating;
 
   return (
-    <div className="rounded-2xl border border-neon-blue/20 bg-gradient-to-b from-neon-deep/40 to-black/60 p-4">
-      <div className="flex items-end justify-center gap-2 sm:gap-3">
+    <div className="flex h-full items-center justify-center">
+      <div className="flex items-center justify-center gap-2 sm:gap-4">
         {hand.map((card, i) => (
-          <div key={i} className="w-[18%] max-w-[5.5rem]">
+          <div key={i} className="w-[clamp(58px,15vh,148px)]">
             <VideoPokerCard
               card={card}
               faceUp={faceUp[i] ?? false}
