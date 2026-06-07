@@ -1,4 +1,5 @@
 import { formatChips } from "@/utils/format";
+import { useCountUp } from "./useCountUp";
 
 type VideoPokerStatusPanelProps = {
   chips: number; // wallet (UserProfile.chips)
@@ -25,12 +26,14 @@ function Meter({ label, value, accent = false }: { label: string; value: string;
 
 /** LCD credit meter across the top of the screen (spec §12.1). */
 export function VideoPokerStatusPanel({ chips, tableStack, bet, coins, lastWin }: VideoPokerStatusPanelProps) {
+  const hasWin = !!lastWin && lastWin > 0;
+  const winValue = useCountUp(lastWin ?? 0, hasWin);
   return (
     <div className="flex items-center justify-between rounded-lg border border-neon-green/20 bg-black/40 px-2 py-1.5">
       <Meter label="Credits" value={formatChips(chips)} />
       <Meter label="Table" value={formatChips(tableStack)} />
       <Meter label={`Bet · ${coins}c`} value={formatChips(bet)} />
-      <Meter label="Win" value={lastWin && lastWin > 0 ? formatChips(lastWin) : "—"} accent={!!lastWin && lastWin > 0} />
+      <Meter label="Win" value={hasWin ? formatChips(winValue) : "—"} accent={hasWin} />
     </div>
   );
 }

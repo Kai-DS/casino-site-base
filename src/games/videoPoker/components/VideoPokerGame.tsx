@@ -5,11 +5,19 @@ import type { GameEconomy } from "@/games/shared/economy";
 import { useVideoPoker, type ActionResult } from "./useVideoPoker";
 import type { DeckProvider } from "../logic/deckProvider";
 import { CLASSIC_ROYAL_BONUS } from "../adapter";
+import { PAYOUT_LABELS, type PayoutResult } from "../logic/payout";
 import { VideoPokerStatusPanel } from "./VideoPokerStatusPanel";
 import { VideoPokerPaytable } from "./VideoPokerPaytable";
 import { VideoPokerTable } from "./VideoPokerTable";
 import { VideoPokerControls } from "./VideoPokerControls";
 import { VideoPokerResultBanner } from "./VideoPokerResultBanner";
+import { VideoPokerWinFx, type WinFxTier } from "./VideoPokerWinFx";
+
+function fxTier(category: PayoutResult["category"]): WinFxTier | null {
+  if (category === "royal_flush") return "royal";
+  if (category === "straight_flush" || category === "four_of_a_kind") return "big";
+  return null;
+}
 
 export type VideoPokerSessionSnapshot = {
   tableStack: number;
@@ -40,6 +48,8 @@ export function VideoPokerGame({
   const vp = useVideoPoker(rate, economy, onInsufficient, { initialTableStack, rng, deckProvider });
 
   const [uiAnimating, setUiAnimating] = useState(false);
+  const [fx, setFx] = useState<{ tier: WinFxTier; label: string; amount: number } | null>(null);
+  const lastFxRef = useRef<PayoutResult | null>(null);
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
@@ -64,6 +74,39 @@ export function VideoPokerGame({
   }, [onSessionChange, vp.canRebuy, vp.rebuy, vp.tableStack]);
 
   const showResult = vp.phase === "result" && !uiAnimating ? vp.lastResult : null;
+
+  // Fire the celebration overlay once when a big/royal result reveals.
+  useEffect(() => {
+    if (!showResult || lastFxRef.current === showResult) return;
+    lastFxRef.current = showResult;
+    const tier = fxTier(showResult.category);
+    if (tier) setFx({ tier, label: PAYOUT_LABELS[showResult.category], amount: showResult.payout });
+  }, [showResult]);
+
+  // Keyboard: 1–5 Hold, Space/Enter DEAL/DRAW, M MAX BET (spec §32.3).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      const k = e.key;
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (k >= "1" && k <= "5") {
+        if (vp.phase === "draw") {
+          e.preventDefault();
+          guard(vp.toggleHold(Number(k) - 1));
+        }
+        return;
+      }
+      if (k === " " || k === "Enter") {
+        if (tag === "button") return; // let the focused button handle it natively
+        e.preventDefault();
+        guard(vp.phase === "draw" ? vp.draw() : vp.deal());
+        return;
+      }
+      if (k === "m" || k === "M") guard(vp.maxBet());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [vp, guard]);
 
   return (
     <div className="vp-bezel relative mx-auto flex h-full w-full max-w-5xl flex-col gap-2 rounded-[1.75rem] p-2 sm:p-3">
@@ -114,8 +157,12 @@ export function VideoPokerGame({
         />
       </div>
 
+      {fx && (
+        <VideoPokerWinFx tier={fx.tier} label={fx.label} amount={fx.amount} onDone={() => setFx(null)} />
+      )}
+
       {toast && (
-        <div className="animate-fadeIn pointer-events-none absolute inset-x-0 bottom-20 mx-auto w-fit rounded-full border border-red-500/40 bg-black/85 px-4 py-2 text-sm text-red-200">
+        <div className="animate-fadeIn pointer-events-none absolute inset-x-0 bottom-20 z-30 mx-auto w-fit rounded-full border border-red-500/40 bg-black/85 px-4 py-2 text-sm text-red-200">
           {toast}
         </div>
       )}

@@ -99,6 +99,42 @@
   }
 }
 
+@keyframes vpPopIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes vpSparkle {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4) rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1) rotate(45deg);
+  }
+}
+
+@keyframes vpRoyalPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 @layer components {
   .vp-card-in {
     animation: vpCardIn 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -115,6 +151,21 @@
   .vp-win-glow {
     animation: vpWinPulse 1.4s ease-in-out infinite;
     border-radius: 0.5rem;
+  }
+  .vp-fx-pop {
+    animation: vpPopIn 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .vp-sparkle {
+    animation: vpSparkle 1.2s ease-in-out infinite;
+  }
+  .vp-royal-bg {
+    background: radial-gradient(
+      circle at 50% 45%,
+      rgba(240, 199, 94, 0.38),
+      rgba(212, 175, 55, 0.12) 42%,
+      transparent 70%
+    );
+    animation: vpRoyalPulse 1.6s ease-in-out infinite;
   }
 
   /* Cabinet frame around the screen + physical buttons */
