@@ -60,3 +60,60 @@
     @apply outline-none focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-2 focus-visible:ring-offset-wine-900;
   }
 }
+
+/* ── Video Poker pseudo-3D card flip (spec §12.3) ── */
+@layer utilities {
+  .perspective-card {
+    perspective: 900px;
+  }
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+}
+
+@keyframes vpCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(-30px) rotate(-6deg) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes vpWinPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(240, 199, 94, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 16px 4px rgba(240, 199, 94, 0.9);
+  }
+}
+
+@layer components {
+  .vp-card-in {
+    animation: vpCardIn 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  /* Inner flip element: rotates between back (default) and front (.is-face-up). */
+  .vp-flip {
+    transform-style: preserve-3d;
+    transition: transform 0.36s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: rotateY(180deg);
+  }
+  .vp-flip.is-face-up {
+    transform: rotateY(0deg);
+  }
+  .vp-win-glow {
+    animation: vpWinPulse 1.4s ease-in-out infinite;
+    border-radius: 0.5rem;
+  }
+}

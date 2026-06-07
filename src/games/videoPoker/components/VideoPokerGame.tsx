@@ -40,6 +40,9 @@ export function VideoPokerGame({
 }: VideoPokerGameProps) {
   const vp = useVideoPoker(rate, economy, onInsufficient, { initialTableStack, rng, deckProvider });
 
+  // UI animation lock (deal/replace), separate from the hook's synchronous resolution.
+  const [uiAnimating, setUiAnimating] = useState(false);
+
   // Surface ActionResult failures as a transient toast (spec §25.2).
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
@@ -63,7 +66,8 @@ export function VideoPokerGame({
     onSessionChange?.({ tableStack: vp.tableStack, canRebuy: vp.canRebuy, rebuy: vp.rebuy });
   }, [onSessionChange, vp.canRebuy, vp.rebuy, vp.tableStack]);
 
-  const showResult = vp.phase === "result" ? vp.lastResult : null;
+  // Hold the result reveal until the draw animation settles (spec §13.1).
+  const showResult = vp.phase === "result" && !uiAnimating ? vp.lastResult : null;
 
   return (
     <div className="relative mx-auto w-full max-w-xl space-y-4 rounded-3xl border border-gold-500/25 bg-gradient-to-b from-neon-bg to-black p-4 shadow-[0_0_40px_rgba(0,0,0,0.5)] sm:p-6">
@@ -85,8 +89,9 @@ export function VideoPokerGame({
         hand={vp.hand}
         held={vp.held}
         phase={vp.phase}
+        handId={vp.handId}
         winningCardIndexes={vp.winningCardIndexes}
-        isAnimating={vp.isAnimating}
+        onAnimatingChange={setUiAnimating}
         onToggleHold={(i) => guard(vp.toggleHold(i))}
       />
 
@@ -94,9 +99,9 @@ export function VideoPokerGame({
 
       <VideoPokerControls
         coins={vp.coins}
-        canChangeBet={vp.canChangeBet}
-        canDeal={vp.canDeal}
-        canDraw={vp.canDraw}
+        canChangeBet={vp.canChangeBet && !uiAnimating}
+        canDeal={vp.canDeal && !uiAnimating}
+        canDraw={vp.canDraw && !uiAnimating}
         phase={vp.phase}
         onSetCoins={(n) => guard(vp.setCoins(n))}
         onMaxBet={() => guard(vp.maxBet())}
