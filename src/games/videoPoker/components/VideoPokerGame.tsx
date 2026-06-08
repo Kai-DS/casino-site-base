@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Rate } from "@/types/casino";
 import type { RNG } from "@/types/card";
 import type { GameEconomy } from "@/games/shared/economy";
-import { useVideoPoker, type ActionResult } from "./useVideoPoker";
+import { useVideoPoker, type ActionResult, type VideoPokerPhase } from "./useVideoPoker";
 import type { DeckProvider } from "../logic/deckProvider";
 import { CLASSIC_ROYAL_BONUS } from "../adapter";
 import { PAYOUT_LABELS, type PayoutResult } from "../logic/payout";
+import { bestHold } from "../logic/strategy";
+import { sound } from "../sound";
 import { VideoPokerStatusPanel } from "./VideoPokerStatusPanel";
 import { VideoPokerPaytable } from "./VideoPokerPaytable";
 import { VideoPokerTable } from "./VideoPokerTable";
@@ -25,6 +27,19 @@ export type VideoPokerSessionSnapshot = {
   rebuy: (newTableStack: number) => ActionResult;
 };
 
+export type VideoPokerDebugSnapshot = {
+  phase: VideoPokerPhase;
+  coinCount: number;
+  currentBet: number;
+  lockedBet: number | null;
+  tableStack: number;
+  isAnimating: boolean;
+  handId: number;
+  lastCategory: string | null;
+  lastPayout: number | null;
+  winningCardIndexes: number[];
+};
+
 type VideoPokerGameProps = {
   rate: Rate;
   economy: GameEconomy;
@@ -33,6 +48,8 @@ type VideoPokerGameProps = {
   rng?: RNG;
   deckProvider?: DeckProvider;
   onSessionChange?: (session: VideoPokerSessionSnapshot) => void;
+  /** Sandbox-only: emits internal state for the debug panel (spec §33.1). */
+  onDebug?: (snapshot: VideoPokerDebugSnapshot) => void;
 };
 
 /** Video Poker cabinet: a glowing LCD screen (meter + paytable + cards + result) over physical controls. */
@@ -44,12 +61,20 @@ export function VideoPokerGame({
   rng,
   deckProvider,
   onSessionChange,
+  onDebug,
 }: VideoPokerGameProps) {
   const vp = useVideoPoker(rate, economy, onInsufficient, { initialTableStack, rng, deckProvider });
 
   const [uiAnimating, setUiAnimating] = useState(false);
   const [fx, setFx] = useState<{ tier: WinFxTier; label: string; amount: number } | null>(null);
   const lastFxRef = useRef<PayoutResult | null>(null);
+
+  // Optimal-hold advisor (Phase 5): non-destructive suggestion highlight.
+  const [suggested, setSuggested] = useState<number[]>([]);
+  const [computing, setComputing] = useState(false);
+
+  const [muted, setMuted] = useState(sound.isMuted());
+  useEffect(() => sound.subscribe(() => setMuted(sound.isMuted())), []);
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
@@ -63,8 +88,9 @@ export function VideoPokerGame({
   }, []);
 
   const guard = useCallback(
-    (result: ActionResult) => {
+    (result: ActionResult, okSound?: () => void) => {
       if (!result.ok) flash(result.message);
+      else okSound?.();
     },
     [flash],
   );
@@ -72,6 +98,32 @@ export function VideoPokerGame({
   useEffect(() => {
     onSessionChange?.({ tableStack: vp.tableStack, canRebuy: vp.canRebuy, rebuy: vp.rebuy });
   }, [onSessionChange, vp.canRebuy, vp.rebuy, vp.tableStack]);
+
+  useEffect(() => {
+    onDebug?.({
+      phase: vp.phase,
+      coinCount: vp.coins,
+      currentBet: vp.currentBet,
+      lockedBet: vp.lockedBet,
+      tableStack: vp.tableStack,
+      isAnimating: uiAnimating,
+      handId: vp.handId,
+      lastCategory: vp.lastResult?.category ?? null,
+      lastPayout: vp.lastResult?.payout ?? null,
+      winningCardIndexes: vp.winningCardIndexes,
+    });
+  }, [
+    onDebug,
+    vp.phase,
+    vp.coins,
+    vp.currentBet,
+    vp.lockedBet,
+    vp.tableStack,
+    uiAnimating,
+    vp.handId,
+    vp.lastResult,
+    vp.winningCardIndexes,
+  ]);
 
   const showResult = vp.phase === "result" && !uiAnimating ? vp.lastResult : null;
 
@@ -81,7 +133,31 @@ export function VideoPokerGame({
     lastFxRef.current = showResult;
     const tier = fxTier(showResult.category);
     if (tier) setFx({ tier, label: PAYOUT_LABELS[showResult.category], amount: showResult.payout });
+    if (tier === "royal") sound.royal();
+    else if (tier === "big") sound.bigWin();
+    else if (showResult.payout > 0) sound.win();
   }, [showResult]);
+
+  // Clear the advisor suggestion whenever a new hand is dealt or we leave the draw phase.
+  useEffect(() => {
+    setSuggested([]);
+  }, [vp.handId, vp.phase]);
+
+  const onHint = useCallback(() => {
+    if (vp.phase !== "draw" || computing) return;
+    const cards = vp.cards;
+    if (cards.length !== 5) return;
+    setComputing(true);
+    // Defer so the "…" state paints before the (heavy) exact-EV search runs.
+    window.setTimeout(() => {
+      try {
+        const { mask } = bestHold(cards, vp.coins, CLASSIC_ROYAL_BONUS);
+        setSuggested(mask.map((hold, i) => (hold ? i : -1)).filter((i) => i >= 0));
+      } finally {
+        setComputing(false);
+      }
+    }, 30);
+  }, [vp.phase, vp.cards, vp.coins, computing]);
 
   // Keyboard: 1–5 Hold, Space/Enter DEAL/DRAW, M MAX BET (spec §32.3).
   useEffect(() => {
@@ -92,14 +168,15 @@ export function VideoPokerGame({
       if (k >= "1" && k <= "5") {
         if (vp.phase === "draw") {
           e.preventDefault();
-          guard(vp.toggleHold(Number(k) - 1));
+          guard(vp.toggleHold(Number(k) - 1), sound.hold);
         }
         return;
       }
       if (k === " " || k === "Enter") {
         if (tag === "button") return; // let the focused button handle it natively
         e.preventDefault();
-        guard(vp.phase === "draw" ? vp.draw() : vp.deal());
+        if (vp.phase === "draw") guard(vp.draw(), sound.draw);
+        else guard(vp.deal(), sound.deal);
         return;
       }
       if (k === "m" || k === "M") guard(vp.maxBet());
@@ -110,6 +187,16 @@ export function VideoPokerGame({
 
   return (
     <div className="vp-bezel relative mx-auto flex h-full w-full max-w-5xl flex-col gap-2 rounded-[1.75rem] p-2 sm:p-3">
+      {/* Mute toggle */}
+      <button
+        type="button"
+        onClick={() => sound.toggleMute()}
+        aria-label={muted ? "Unmute" : "Mute"}
+        className="focus-ring absolute right-3 top-3 z-30 rounded-full border border-white/15 bg-black/50 px-2 py-1 text-sm text-white/70 hover:bg-white/10"
+      >
+        {muted ? "🔇" : "🔊"}
+      </button>
+
       {/* LCD screen */}
       <div className="vp-screen flex min-h-0 flex-1 flex-col gap-2 rounded-2xl p-2 sm:p-3">
         <VideoPokerStatusPanel
@@ -134,8 +221,9 @@ export function VideoPokerGame({
             phase={vp.phase}
             handId={vp.handId}
             winningCardIndexes={vp.winningCardIndexes}
+            suggestedIndexes={suggested}
             onAnimatingChange={setUiAnimating}
-            onToggleHold={(i) => guard(vp.toggleHold(i))}
+            onToggleHold={(i) => guard(vp.toggleHold(i), sound.hold)}
           />
         </div>
 
@@ -149,11 +237,14 @@ export function VideoPokerGame({
           canChangeBet={vp.canChangeBet && !uiAnimating}
           canDeal={vp.canDeal && !uiAnimating}
           canDraw={vp.canDraw && !uiAnimating}
+          canHint={vp.phase === "draw" && !uiAnimating && !computing}
+          computing={computing}
           phase={vp.phase}
           onSetCoins={(n) => guard(vp.setCoins(n))}
           onMaxBet={() => guard(vp.maxBet())}
-          onDeal={() => guard(vp.deal())}
-          onDraw={() => guard(vp.draw())}
+          onDeal={() => guard(vp.deal(), sound.deal)}
+          onDraw={() => guard(vp.draw(), sound.draw)}
+          onHint={onHint}
         />
       </div>
 

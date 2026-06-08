@@ -7,6 +7,8 @@ type VideoPokerCardProps = {
   faceUp: boolean;
   held: boolean;
   winning: boolean;
+  /** Advisor suggests holding this card (non-destructive hint). */
+  suggested: boolean;
   interactive: boolean;
   /** Bumped each DEAL so the entrance animation re-triggers (slot-stable key). */
   dealKey: number;
@@ -29,12 +31,14 @@ export function VideoPokerCard({
   faceUp,
   held,
   winning,
+  suggested,
   interactive,
   dealKey,
   dealDelayMs,
   onToggleHold,
   ariaIndex,
 }: VideoPokerCardProps) {
+  const showHint = suggested && !held;
   return (
     <button
       type="button"
@@ -46,14 +50,23 @@ export function VideoPokerCard({
         held ? "-translate-y-2" : ""
       }`}
     >
-      {/* HOLD badge (outside the flip so it doesn't rotate) */}
+      {/* HELD badge — high contrast amber so it reads on the green LCD */}
       <span
-        className={`pointer-events-none absolute -top-2 left-1/2 z-10 -translate-x-1/2 rounded-sm border border-neon-green bg-neon-deepgreen px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-neon-green shadow-neongreen transition-opacity ${
+        className={`pointer-events-none absolute -top-2 left-1/2 z-10 -translate-x-1/2 rounded border border-amber-200 bg-amber-400 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-black shadow-[0_0_10px_rgba(251,191,36,0.75)] transition-opacity ${
           held ? "opacity-100" : "opacity-0"
         }`}
       >
-        Hold
+        Held
       </span>
+      {/* Advisor hint (non-destructive): dashed ring + tag on cards you should hold */}
+      {showHint && (
+        <>
+          <span className="pointer-events-none absolute inset-0 z-10 rounded-lg border-2 border-dashed border-amber-300/90 [animation:vpWinPulse_1.4s_ease-in-out_infinite]" />
+          <span className="pointer-events-none absolute -bottom-2 left-1/2 z-10 -translate-x-1/2 rounded bg-amber-300 px-1.5 text-[9px] font-black uppercase text-black">
+            Hold
+          </span>
+        </>
+      )}
       <div key={dealKey} className="vp-card-in" style={{ animationDelay: `${dealDelayMs}ms` }}>
         <div className={`vp-flip relative aspect-[3/4.2] w-full ${faceUp ? "is-face-up" : ""}`}>
           {/* Front */}

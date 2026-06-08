@@ -5,11 +5,14 @@ type VideoPokerControlsProps = {
   canChangeBet: boolean;
   canDeal: boolean;
   canDraw: boolean;
+  canHint: boolean;
+  computing: boolean;
   phase: "unseated" | "buyIn" | "ready" | "draw" | "result";
   onSetCoins: (n: number) => void;
   onMaxBet: () => void;
   onDeal: () => void;
   onDraw: () => void;
+  onHint: () => void;
 };
 
 const COINS = Array.from({ length: MAX_COINS }, (_, i) => i + 1);
@@ -20,11 +23,14 @@ export function VideoPokerControls({
   canChangeBet,
   canDeal,
   canDraw,
+  canHint,
+  computing,
   phase,
   onSetCoins,
   onMaxBet,
   onDeal,
   onDraw,
+  onHint,
 }: VideoPokerControlsProps) {
   const maxBet = coins >= MAX_COINS;
 
@@ -61,6 +67,16 @@ export function VideoPokerControls({
         }`}
       >
         Max Bet
+      </button>
+
+      <button
+        type="button"
+        disabled={!canHint}
+        onClick={onHint}
+        title="Highlight the mathematically best cards to hold"
+        className="focus-ring h-12 rounded-xl border-2 border-white/20 bg-black/40 px-4 text-sm font-black uppercase tracking-wide text-white/70 transition hover:bg-white/10 active:scale-95 disabled:opacity-30"
+      >
+        {computing ? "…" : "Hint"}
       </button>
 
       {phase === "draw" ? (

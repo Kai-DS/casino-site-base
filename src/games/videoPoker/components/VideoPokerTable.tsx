@@ -9,6 +9,8 @@ type VideoPokerTableProps = {
   phase: VideoPokerPhase;
   handId: number;
   winningCardIndexes: number[];
+  /** Advisor's suggested hold (non-destructive highlight). */
+  suggestedIndexes: number[];
   onToggleHold: (index: number) => void;
   /** Tells the parent when a deal/draw animation is in flight (locks controls + hides result). */
   onAnimatingChange: (animating: boolean) => void;
@@ -31,6 +33,7 @@ export function VideoPokerTable({
   phase,
   handId,
   winningCardIndexes,
+  suggestedIndexes,
   onToggleHold,
   onAnimatingChange,
 }: VideoPokerTableProps) {
@@ -109,6 +112,7 @@ export function VideoPokerTable({
               faceUp={faceUp[i] ?? false}
               held={held[i] ?? false}
               winning={revealWinners && winningCardIndexes.includes(i)}
+              suggested={phase === "draw" && suggestedIndexes.includes(i)}
               interactive={interactive}
               dealKey={handId}
               dealDelayMs={i * STAGGER}

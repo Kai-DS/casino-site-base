@@ -33,7 +33,11 @@ export function CardFace({
   }
 
   const ink = RED_SUITS.includes(card.suit) ? "text-red-600" : "text-neutral-900";
-  const ring = winning ? "ring-2 ring-gold-400" : held ? "ring-2 ring-neon-green" : "ring-black/10";
+  const ring = winning
+    ? "ring-2 ring-gold-400"
+    : held
+      ? "ring-2 ring-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.55)]"
+      : "ring-black/10";
 
   return (
     <div
@@ -47,8 +51,8 @@ export function CardFace({
         <span className="text-3xl">{SUIT_GLYPH[card.suit]}</span>
       </div>
       {held && showHoldLabel && (
-        <span className="absolute inset-x-0 bottom-1 text-center text-[10px] font-bold uppercase text-neon-green">
-          Hold
+        <span className="absolute inset-x-0 bottom-1 text-center text-[10px] font-bold uppercase text-amber-500">
+          Held
         </span>
       )}
     </div>
