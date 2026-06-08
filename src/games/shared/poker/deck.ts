@@ -3,6 +3,7 @@ import type { Card, Suit, Rank, RNG } from "@/types/card";
 import { SUITS, RANKS, cardId } from "@/types/card";
 
 export type { Card, Suit, Rank, RNG };
+export type DeckValidationError = "DECK_EXHAUSTED" | "DUPLICATE_CARD" | "INVALID_CARD";
 
 const defaultRng: RNG = Math.random;
 
@@ -37,4 +38,32 @@ export function take(deck: readonly Card[], n: number): { taken: Card[]; rest: C
 /** Convenience: a freshly shuffled deck. */
 export function shuffledDeck(rng: RNG = defaultRng): Card[] {
   return shuffle(createDeck(), rng);
+}
+
+export type DeckValidationResult =
+  | { ok: true; deck: Card[] }
+  | { ok: false; reason: DeckValidationError; message: string };
+
+export function validatePokerDeck(deck: readonly Card[], minCards = 52): DeckValidationResult {
+  if (deck.length < minCards) {
+    return { ok: false, reason: "DECK_EXHAUSTED", message: "デッキの枚数が不足しています。" };
+  }
+
+  const validSuits = new Set<string>(SUITS);
+  const validRanks = new Set<number>(RANKS);
+  const seen = new Set<string>();
+
+  for (const card of deck) {
+    if (!validSuits.has(card.suit) || !validRanks.has(card.rank)) {
+      return { ok: false, reason: "INVALID_CARD", message: "不正なカードが含まれています。" };
+    }
+
+    const key = `${card.suit}:${card.rank}`;
+    if (seen.has(key)) {
+      return { ok: false, reason: "DUPLICATE_CARD", message: "重複したカードが含まれています。" };
+    }
+    seen.add(key);
+  }
+
+  return { ok: true, deck: deck.slice() };
 }
