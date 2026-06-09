@@ -8,6 +8,8 @@ import {
   resetOtherActivePlayersHasActed,
   validateAllIn,
 } from "./betting";
+import { buildFoldResult } from "./pot";
+import * as holdemEvaluator from "./holdemEvaluator";
 
 type TestEconomy = GameEconomy & {
   placeBet: ReturnType<typeof vi.fn<(amount: number) => boolean>>;
@@ -183,5 +185,111 @@ describe("Texas Hold'em betting core", () => {
     expect(reset.find((candidate) => candidate.id === "sb")?.hasActed).toBe(false);
     expect(reset.find((candidate) => candidate.id === "utg")?.hasActed).toBe(false);
     expect(reset.find((candidate) => candidate.id === "folded")?.hasActed).toBe(true);
+  });
+
+  it("builds a fold result without showdown evaluation or refunds", () => {
+    const rankSpy = vi.spyOn(holdemEvaluator, "rankBestOfSeven");
+    const seats = [
+      seat({ id: "winner", isHuman: true, tableStack: 96, totalContribution: 4 }),
+      seat({ id: "small-blind", seatIndex: 1, tableStack: 99, totalContribution: 1, status: "folded" }),
+      seat({ id: "big-blind", seatIndex: 2, tableStack: 98, totalContribution: 2, status: "folded" }),
+    ];
+
+    const result = buildFoldResult({
+      handId: 1,
+      seats,
+      winnerSeatIndex: 0,
+      pot: { amount: 7 },
+      dealerButtonIndex: 0,
+    });
+
+    expect(result.reason).toBe("fold");
+    expect(result.showdownHands).toEqual([]);
+    expect(result.winningCategory).toBe("fold");
+    expect(result.totalPotAmount).toBe(7);
+    expect(result.winners).toEqual([expect.objectContaining({ seatIndex: 0, wonAmount: 7, profit: 3 })]);
+    expect(result.settlements.find((settlement) => settlement.seatIndex === 1)?.profit).toBe(-1);
+    expect(result.settlements.find((settlement) => settlement.seatIndex === 2)?.profit).toBe(-2);
+    expect(rankSpy).not.toHaveBeenCalled();
+    rankSpy.mockRestore();
+  });
+
+  it("reports availableActions reasons for turn, stack, cap, and forbidden-zone states", () => {
+    const notTurn = calculateAvailableActions({
+      seats: [seat({ id: "player", isHuman: true }), seat({ id: "cpu", seatIndex: 1 })],
+      playerSeatIndex: 0,
+      currentTurnSeatIndex: 1,
+      currentBet: 0,
+      bigBlind: 2,
+      minRaise: 2,
+    });
+    expect(Object.values(notTurn).every((action) => !action.enabled && action.reason === "NOT_YOUR_TURN")).toBe(true);
+
+    const checkable = calculateAvailableActions({
+      seats: [seat({ id: "player", isHuman: true, streetContribution: 2, totalContribution: 2 }), seat({ id: "cpu", seatIndex: 1 })],
+      playerSeatIndex: 0,
+      currentTurnSeatIndex: 0,
+      currentBet: 2,
+      bigBlind: 2,
+      minRaise: 2,
+    });
+    expect(checkable.check.enabled).toBe(true);
+
+    const callable = calculateAvailableActions({
+      seats: [seat({ id: "player", isHuman: true, tableStack: 10, streetContribution: 2, totalContribution: 2 }), seat({ id: "cpu", seatIndex: 1 })],
+      playerSeatIndex: 0,
+      currentTurnSeatIndex: 0,
+      currentBet: 4,
+      bigBlind: 2,
+      minRaise: 2,
+    });
+    expect(callable.call.enabled).toBe(true);
+
+    const shortCall = calculateAvailableActions({
+      seats: [seat({ id: "player", isHuman: true, tableStack: 1 }), seat({ id: "cpu", seatIndex: 1 })],
+      playerSeatIndex: 0,
+      currentTurnSeatIndex: 0,
+      currentBet: 2,
+      bigBlind: 2,
+      minRaise: 2,
+    });
+    expect(shortCall.call).toEqual({ enabled: false, reason: "INSUFFICIENT_TABLE_STACK" });
+
+    const cappedBet = calculateAvailableActions({
+      seats: [seat({ id: "player", isHuman: true, tableStack: 100 }), seat({ id: "short", seatIndex: 1, tableStack: 1 })],
+      playerSeatIndex: 0,
+      currentTurnSeatIndex: 0,
+      currentBet: 0,
+      bigBlind: 2,
+      minRaise: 2,
+    });
+    expect(cappedBet.bet).toEqual({ enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+    expect(cappedBet.allIn).toEqual({ enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+
+    const cappedRaise = calculateAvailableActions({
+      seats: [
+        seat({ id: "player", isHuman: true, tableStack: 100, streetContribution: 2, totalContribution: 2 }),
+        seat({ id: "short", seatIndex: 1, tableStack: 2, streetContribution: 2, totalContribution: 2 }),
+      ],
+      playerSeatIndex: 0,
+      currentTurnSeatIndex: 0,
+      currentBet: 4,
+      bigBlind: 2,
+      minRaise: 2,
+    });
+    expect(cappedRaise.raise).toEqual({ enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+
+    const forbiddenAllIn = calculateAvailableActions({
+      seats: [
+        seat({ id: "player", isHuman: true, tableStack: 5, streetContribution: 10, totalContribution: 10 }),
+        seat({ id: "cpu", seatIndex: 1, tableStack: 100 }),
+      ],
+      playerSeatIndex: 0,
+      currentTurnSeatIndex: 0,
+      currentBet: 12,
+      bigBlind: 10,
+      minRaise: 10,
+    });
+    expect(forbiddenAllIn.allIn).toEqual({ enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" });
   });
 });

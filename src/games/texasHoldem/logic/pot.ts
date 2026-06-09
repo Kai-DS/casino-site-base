@@ -1,4 +1,11 @@
-import type { HoldemResult, HoldemSeat, HoldemSettlement, Pot } from "../types";
+import type {
+  HandCategory,
+  HoldemResult,
+  HoldemSeat,
+  HoldemSettlement,
+  HoldemShowdownHand,
+  Pot,
+} from "../types";
 
 export function orderWinnersForRemainder(
   winners: readonly HoldemSeat[],
@@ -90,5 +97,38 @@ export function buildFoldResult(params: {
     playerWonAmount: playerSettlement?.wonAmount ?? 0,
     playerProfit: playerSettlement?.profit ?? 0,
     winningCategory: "fold",
+  };
+}
+
+export function buildShowdownResult(params: {
+  handId: number;
+  seats: readonly HoldemSeat[];
+  winnerSeatIndexes: readonly number[];
+  showdownHands: readonly HoldemShowdownHand[];
+  pot: Pot;
+  dealerButtonIndex: number | null;
+}): HoldemResult {
+  const settlements = buildSettlements(
+    params.seats,
+    params.winnerSeatIndexes,
+    params.pot.amount,
+    params.dealerButtonIndex,
+  );
+  const playerSettlement = settlements.find((settlement) => settlement.isHuman);
+  const winners = settlements.filter((settlement) => settlement.wonAmount > 0);
+  const winningHand = params.showdownHands.find((hand) =>
+    params.winnerSeatIndexes.includes(hand.seatIndex),
+  );
+
+  return {
+    handId: params.handId,
+    reason: "showdown",
+    winners,
+    settlements,
+    showdownHands: params.showdownHands.slice(),
+    totalPotAmount: params.pot.amount,
+    playerWonAmount: playerSettlement?.wonAmount ?? 0,
+    playerProfit: playerSettlement?.profit ?? 0,
+    winningCategory: winningHand?.bestHand.rank.category as HandCategory,
   };
 }

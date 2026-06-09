@@ -266,18 +266,38 @@ export function calculateAvailableActions(context: ActionContext): AvailableActi
   const maxRaiseTo = maxRaiseToForSeat(seat, context.seats);
   const allInResult = validateAllIn(seat, context.seats, context.currentBet, context.bigBlind, context.minRaise);
 
+  const callReason = amountToCall <= 0
+    ? "INVALID_PHASE"
+    : seat.tableStack < amountToCall
+      ? "INSUFFICIENT_TABLE_STACK"
+      : seat.totalContribution + amountToCall > cap
+        ? "SIDE_POT_NOT_SUPPORTED"
+        : "INSUFFICIENT_TABLE_STACK";
+  const betReason = context.currentBet !== 0
+    ? "INVALID_PHASE"
+    : seat.tableStack < context.bigBlind
+      ? "INSUFFICIENT_TABLE_STACK"
+      : seat.totalContribution + context.bigBlind > cap
+        ? "SIDE_POT_NOT_SUPPORTED"
+        : "INSUFFICIENT_TABLE_STACK";
+  const raiseReason = context.currentBet === 0
+    ? "INVALID_PHASE"
+    : context.currentBet + context.minRaise > maxRaiseTo
+      ? "SIDE_POT_NOT_SUPPORTED"
+      : "INVALID_BET";
+
   return {
     fold: enabled(),
     check: amountToCall === 0 ? enabled() : disabled("INVALID_PHASE"),
     call: amountToCall > 0 && seat.tableStack >= amountToCall && seat.totalContribution + amountToCall <= cap
       ? enabled()
-      : disabled(amountToCall <= 0 ? "INVALID_PHASE" : "INSUFFICIENT_TABLE_STACK"),
+      : disabled(callReason),
     bet: context.currentBet === 0 && seat.tableStack >= context.bigBlind && seat.totalContribution + context.bigBlind <= cap
       ? enabled()
-      : disabled(context.currentBet !== 0 ? "INVALID_PHASE" : "INSUFFICIENT_TABLE_STACK"),
+      : disabled(betReason),
     raise: context.currentBet > 0 && context.currentBet + context.minRaise <= maxRaiseTo
       ? enabled()
-      : disabled(context.currentBet === 0 ? "INVALID_PHASE" : "SIDE_POT_NOT_SUPPORTED"),
+      : disabled(raiseReason),
     allIn: allInResult.ok ? enabled() : disabled(allInResult.reason),
   };
 }

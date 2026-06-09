@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { shuffledDeck, validatePokerDeck } from "@/games/shared/poker/deck";
 import { buildHoldemGameResult, toHoldemRateConfig } from "./adapter";
 import {
@@ -19,7 +19,10 @@ import {
 import {
   applySettlementsToSeats,
   buildFoldResult,
+  buildShowdownResult,
 } from "./logic/pot";
+import { chooseCpuAction } from "./logic/cpuStrategy";
+import { evaluateShowdown } from "./logic/showdown";
 import type {
   ActionResult,
   AnimationEvent,
@@ -36,7 +39,7 @@ import type {
   UseTexasHoldemReturn,
 } from "./types";
 
-type PendingAfterAnimation = "preflop" | "result" | null;
+type PendingAfterAnimation = "preflop" | "flop" | "turn" | "river" | "result" | "cpuAction" | null;
 
 interface HoldemState {
   phase: HoldemPhase;
@@ -187,6 +190,34 @@ function orderedSeatIndexesFrom(startSeatIndex: number, seats: readonly HoldemSe
 
 function bettingPhase(phase: HoldemPhase): phase is "preflop" | "flop" | "turn" | "river" {
   return phase === "preflop" || phase === "flop" || phase === "turn" || phase === "river";
+}
+
+function animationPhaseForBettingPhase(phase: "preflop" | "flop" | "turn" | "river"): HoldemAnimationPhase {
+  return phase === "preflop" ? "playerActing" : "playerActing";
+}
+
+function dealingPhaseForStreet(street: "flop" | "turn" | "river"): HoldemPhase {
+  if (street === "flop") return "dealingFlop";
+  if (street === "turn") return "dealingTurn";
+  return "dealingRiver";
+}
+
+function animationPhaseForStreet(street: "flop" | "turn" | "river"): HoldemAnimationPhase {
+  if (street === "flop") return "dealingFlop";
+  if (street === "turn") return "dealingTurn";
+  return "dealingRiver";
+}
+
+function resetSeatsForNewStreet(seats: readonly HoldemSeat[]): HoldemSeat[] {
+  return seats.map((seat) => ({
+    ...seat,
+    streetContribution: 0,
+    hasActed: seat.status !== "active",
+  }));
+}
+
+function prependAnimationEvents(state: HoldemState, events: AnimationEvent[]): HoldemState {
+  return { ...state, animationEvents: [...events, ...state.animationEvents] };
 }
 
 export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemReturn {
@@ -358,6 +389,12 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     return { ok: true };
   }, [config.bigBlind, config.minRaise, config.smallBlind, locked, nextEventId, rate, setState]);
 
+  const settlePlayerResult = useCallback((result: HoldemResult) => {
+    if (result.settlements.some((settlement) => settlement.isHuman)) {
+      economyRef.current.settle(buildHoldemGameResult(result));
+    }
+  }, []);
+
   const finishFoldHand = useCallback((current: HoldemState, seats: HoldemSeat[]): HoldemState => {
     const winner = seats.find(isContender);
     if (!winner) return current;
@@ -368,10 +405,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       pot: current.pot,
       dealerButtonIndex: current.dealerButtonIndex,
     });
-    const playerSettlement = result.settlements.find((settlement) => settlement.isHuman);
-    if (playerSettlement && playerSettlement.wonAmount > 0) {
-      economyRef.current.settle(buildHoldemGameResult(result));
-    }
+    settlePlayerResult(result);
 
     const events: AnimationEvent[] = [
       {
@@ -400,19 +434,165 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       animationEvents: queuedEvents,
       pendingAfterAnimation: queuedEvents.length > 0 ? "result" : null,
     };
+  }, [nextEventId, settlePlayerResult]);
+
+  const buildShowdownEvents = useCallback((
+    seats: readonly HoldemSeat[],
+    result: HoldemResult,
+    revealEvents: readonly AnimationEvent[] = [],
+  ): AnimationEvent[] => {
+    const cpuRevealEvents = seats
+      .filter((seat) => !seat.isHuman && isContender(seat))
+      .map((seat): AnimationEvent => ({ id: nextEventId("FLIP_HOLE"), type: "FLIP_HOLE", seat: seat.seatIndex }));
+    const highlightEvents = result.showdownHands
+      .filter((hand) => result.winners.some((winner) => winner.seatIndex === hand.seatIndex))
+      .map((hand): AnimationEvent => ({
+        id: nextEventId("HIGHLIGHT_BEST"),
+        type: "HIGHLIGHT_BEST",
+        seat: hand.seatIndex,
+        cards: hand.bestHand.cards,
+      }));
+    const awardEvents = result.winners.map((winner): AnimationEvent => ({
+      id: nextEventId("AWARD_POT"),
+      type: "AWARD_POT",
+      seat: winner.seatIndex,
+      amount: winner.wonAmount,
+      isSplit: result.winners.length > 1,
+    }));
+
+    return [
+      ...revealEvents,
+      ...cpuRevealEvents,
+      ...highlightEvents,
+      ...awardEvents,
+      {
+        id: nextEventId("RESULT_BANNER"),
+        type: "RESULT_BANNER",
+        winners: result.winners.map((winner) => winner.seatIndex),
+        category: result.winningCategory,
+      },
+    ];
   }, [nextEventId]);
+
+  const resolveShowdown = useCallback((
+    current: HoldemState,
+    communityCards: Card[],
+    deck: Card[],
+    revealEvents: readonly AnimationEvent[] = [],
+  ): HoldemState => {
+    try {
+      const showdown = evaluateShowdown(current.seats, communityCards);
+      const result = buildShowdownResult({
+        handId: current.handId,
+        seats: current.seats,
+        winnerSeatIndexes: showdown.winnerSeatIndexes,
+        showdownHands: showdown.showdownHands,
+        pot: current.pot,
+        dealerButtonIndex: current.dealerButtonIndex,
+      });
+      settlePlayerResult(result);
+
+      const events = buildShowdownEvents(current.seats, result, revealEvents);
+      const queuedEvents = animationEnabledRef.current ? events : [];
+      return {
+        ...current,
+        phase: queuedEvents.length > 0 ? "showdown" : "result",
+        animationPhase: queuedEvents.length > 0 ? "showdownReveal" : "resultBanner",
+        seats: applySettlementsToSeats(current.seats, result.settlements),
+        currentTurnSeatIndex: null,
+        communityCards,
+        deck,
+        pot: { amount: 0 },
+        lastResult: result,
+        animationEvents: queuedEvents,
+        pendingAfterAnimation: queuedEvents.length > 0 ? "result" : null,
+      };
+    } catch {
+      return { ...current, actionError: "DUPLICATE_CARD" };
+    }
+  }, [buildShowdownEvents, settlePlayerResult]);
+
+  const drawMissingCommunityForShowdown = useCallback((current: HoldemState): HoldemState => {
+    const deck = current.deck.slice();
+    const communityCards = current.communityCards.slice();
+    const revealEvents: AnimationEvent[] = [];
+
+    if (communityCards.length === 0) {
+      const flop = deck.splice(0, 3) as [Card, Card, Card];
+      if (flop.length < 3) return { ...current, actionError: "DECK_EXHAUSTED" };
+      communityCards.push(...flop);
+      revealEvents.push({ id: nextEventId("REVEAL_FLOP"), type: "REVEAL_FLOP", cards: flop });
+    }
+    if (communityCards.length === 3) {
+      const turn = deck.shift();
+      if (!turn) return { ...current, actionError: "DECK_EXHAUSTED" };
+      communityCards.push(turn);
+      revealEvents.push({ id: nextEventId("REVEAL_TURN"), type: "REVEAL_TURN", card: turn });
+    }
+    if (communityCards.length === 4) {
+      const river = deck.shift();
+      if (!river) return { ...current, actionError: "DECK_EXHAUSTED" };
+      communityCards.push(river);
+      revealEvents.push({ id: nextEventId("REVEAL_RIVER"), type: "REVEAL_RIVER", card: river });
+    }
+
+    return resolveShowdown(current, communityCards, deck, revealEvents);
+  }, [nextEventId, resolveShowdown]);
+
+  const dealNextStreet = useCallback((current: HoldemState, street: "flop" | "turn" | "river"): HoldemState => {
+    const deck = current.deck.slice();
+    const communityCards = current.communityCards.slice();
+    let event: AnimationEvent;
+
+    if (street === "flop") {
+      const flop = deck.splice(0, 3) as [Card, Card, Card];
+      if (flop.length < 3) return { ...current, actionError: "DECK_EXHAUSTED" };
+      communityCards.push(...flop);
+      event = { id: nextEventId("REVEAL_FLOP"), type: "REVEAL_FLOP", cards: flop };
+    } else {
+      const card = deck.shift();
+      if (!card) return { ...current, actionError: "DECK_EXHAUSTED" };
+      communityCards.push(card);
+      event = street === "turn"
+        ? { id: nextEventId("REVEAL_TURN"), type: "REVEAL_TURN", card }
+        : { id: nextEventId("REVEAL_RIVER"), type: "REVEAL_RIVER", card };
+    }
+
+    const seats = resetSeatsForNewStreet(current.seats);
+    const firstSeatIndex = current.dealerButtonIndex === null
+      ? null
+      : nextActionSeatIndex(seats, current.dealerButtonIndex);
+    if (firstSeatIndex === null) {
+      return resolveShowdown({ ...current, seats, communityCards, deck }, communityCards, deck, [event]);
+    }
+
+    const queuedEvents = animationEnabledRef.current ? [event] : [];
+    return {
+      ...current,
+      phase: queuedEvents.length > 0 ? dealingPhaseForStreet(street) : street,
+      animationPhase: queuedEvents.length > 0 ? animationPhaseForStreet(street) : animationPhaseForBettingPhase(street),
+      seats,
+      currentBet: 0,
+      currentTurnSeatIndex: firstSeatIndex,
+      communityCards,
+      deck,
+      animationEvents: queuedEvents,
+      pendingAfterAnimation: queuedEvents.length > 0 ? street : null,
+    };
+  }, [nextEventId, resolveShowdown]);
 
   const advanceAfterAction = useCallback((current: HoldemState, seats: HoldemSeat[], actorSeatIndex: number): HoldemState => {
     const contenders = seats.filter(isContender);
     if (contenders.length === 1) return finishFoldHand(current, seats);
+    const actedCurrent = { ...current, seats };
+    if (contenders.every((seat) => seat.status === "allIn")) {
+      return drawMissingCommunityForShowdown(actedCurrent);
+    }
     if (isBettingRoundComplete(seats, current.currentBet)) {
-      return {
-        ...current,
-        phase: current.phase === "preflop" ? "dealingFlop" : current.phase,
-        animationPhase: "idle",
-        seats,
-        currentTurnSeatIndex: null,
-      };
+      if (current.phase === "preflop") return dealNextStreet(actedCurrent, "flop");
+      if (current.phase === "flop") return dealNextStreet(actedCurrent, "turn");
+      if (current.phase === "turn") return dealNextStreet(actedCurrent, "river");
+      if (current.phase === "river") return resolveShowdown(actedCurrent, current.communityCards, current.deck);
     }
 
     return {
@@ -420,7 +600,92 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       seats,
       currentTurnSeatIndex: nextActionSeatIndex(seats, actorSeatIndex),
     };
-  }, [finishFoldHand]);
+  }, [dealNextStreet, drawMissingCommunityForShowdown, finishFoldHand, resolveShowdown]);
+
+  const emitActionEvents = useCallback((seat: HoldemSeat, action: HoldemActionKind, amount: number, potAfter?: number): AnimationEvent[] => {
+    const events: AnimationEvent[] = [
+      { id: nextEventId("PLAYER_ACTION_LABEL"), type: "PLAYER_ACTION_LABEL", seat: seat.seatIndex, action, amount: amount || undefined },
+    ];
+    if (amount > 0 && potAfter !== undefined) {
+      events.push({ id: nextEventId("CHIP_TO_POT"), type: "CHIP_TO_POT", seat: seat.seatIndex, amount, potAfter });
+    }
+    return animationEnabledRef.current ? events : [];
+  }, [nextEventId]);
+
+  const resolveCpuAction = useCallback((current: HoldemState): HoldemState => {
+    const seat = current.currentTurnSeatIndex === null
+      ? null
+      : current.seats.find((candidate) => candidate.seatIndex === current.currentTurnSeatIndex) ?? null;
+    if (!seat || seat.isHuman || seat.status !== "active") return current;
+
+    const decision = chooseCpuAction({ seat, seats: current.seats, currentBet: current.currentBet, phase: current.phase });
+    if (decision.action === "check") {
+      const checked = applyActionLabel(seat, "check");
+      const seats = setSeat(current.seats, checked);
+      return prependAnimationEvents(
+        advanceAfterAction(current, seats, checked.seatIndex),
+        emitActionEvents(checked, "check", 0),
+      );
+    }
+
+    if (decision.action === "fold") {
+      const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
+      const seats = setSeat(current.seats, folded);
+      return prependAnimationEvents(
+        advanceAfterAction(current, seats, folded.seatIndex),
+        emitActionEvents(folded, "fold", 0),
+      );
+    }
+
+    const placed = placeToPot({
+      seats: current.seats,
+      pot: current.pot,
+      playerId: seat.id,
+      amount: decision.amount,
+      economy: economyRef.current,
+    });
+
+    if (placed.ok) {
+      const called = applyActionLabel(placed.seat, "call");
+      const seats = setSeat(placed.seats, called);
+      return prependAnimationEvents(
+        advanceAfterAction({ ...current, pot: placed.pot }, seats, called.seatIndex),
+        emitActionEvents(called, "call", decision.amount, placed.pot.amount),
+      );
+    }
+
+    const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
+    const seats = setSeat(current.seats, folded);
+    return prependAnimationEvents(
+      advanceAfterAction(current, seats, folded.seatIndex),
+      emitActionEvents(folded, "fold", 0),
+    );
+  }, [advanceAfterAction, emitActionEvents]);
+
+  useEffect(() => {
+    const current = stateRef.current;
+    if (isResolvingRef.current || current.animationEvents.length > 0 || !bettingPhase(current.phase)) return;
+    const seat = current.currentTurnSeatIndex === null
+      ? null
+      : current.seats.find((candidate) => candidate.seatIndex === current.currentTurnSeatIndex) ?? null;
+    if (!seat || seat.isHuman || seat.status !== "active") return;
+
+    if (animationEnabledRef.current) {
+      setState({
+        ...current,
+        animationPhase: "cpuThinking",
+        animationEvents: [
+          { id: nextEventId("CPU_THINKING"), type: "CPU_THINKING", seat: seat.seatIndex, ms: 300 },
+        ],
+        pendingAfterAnimation: "cpuAction",
+      });
+      return;
+    }
+
+    isResolvingRef.current = true;
+    setState(resolveCpuAction(current));
+    isResolvingRef.current = false;
+  }, [nextEventId, resolveCpuAction, setState, state]);
 
   const guardPlayerAction = useCallback((current: HoldemState): HoldemSeat | ActionResult => {
     if (locked()) return fail("ANIMATING", "演出中です。");
@@ -434,23 +699,14 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     return player;
   }, [locked]);
 
-  const emitActionEvents = useCallback((seat: HoldemSeat, action: HoldemActionKind, amount: number, potAfter?: number): AnimationEvent[] => {
-    const events: AnimationEvent[] = [
-      { id: nextEventId("PLAYER_ACTION_LABEL"), type: "PLAYER_ACTION_LABEL", seat: seat.seatIndex, action, amount: amount || undefined },
-    ];
-    if (amount > 0 && potAfter !== undefined) {
-      events.push({ id: nextEventId("CHIP_TO_POT"), type: "CHIP_TO_POT", seat: seat.seatIndex, amount, potAfter });
-    }
-    return animationEnabledRef.current ? events : [];
-  }, [nextEventId]);
-
   const commitPlayerSeats = useCallback((current: HoldemState, seats: HoldemSeat[], events: AnimationEvent[]): ActionResult => {
     const player = seats.find((seat) => seat.seatIndex === current.playerSeatIndex);
     if (!player) return fail("NOT_SEATED", "着席していません。");
+    const advanced = advanceAfterAction(current, seats, player.seatIndex);
     setState({
-      ...advanceAfterAction(current, seats, player.seatIndex),
+      ...advanced,
       actionError: null,
-      animationEvents: events,
+      animationEvents: [...events, ...advanced.animationEvents],
     });
     return { ok: true };
   }, [advanceAfterAction, setState]);
@@ -461,12 +717,12 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     if ("ok" in guarded) return guarded;
     const folded = applyActionLabel({ ...guarded, status: "folded" }, "fold");
     const seats = setSeat(current.seats, folded);
-    const next = finishFoldHand({
-      ...current,
-      seats,
-      animationEvents: emitActionEvents(folded, "fold", 0),
-    }, seats);
-    setState({ ...next, actionError: null });
+    const next = finishFoldHand({ ...current, seats }, seats);
+    setState({
+      ...next,
+      actionError: null,
+      animationEvents: [...emitActionEvents(folded, "fold", 0), ...next.animationEvents],
+    });
     return { ok: true };
   }, [emitActionEvents, finishFoldHand, guardPlayerAction, setState]);
 
@@ -639,12 +895,31 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       return;
     }
 
+    if (current.pendingAfterAnimation === "cpuAction") {
+      setState(resolveCpuAction({
+        ...current,
+        animationEvents: [],
+        pendingAfterAnimation: null,
+      }));
+      return;
+    }
+
     const phase = current.pendingAfterAnimation === "preflop"
       ? "preflop"
-      : current.pendingAfterAnimation === "result"
-        ? "result"
-        : current.phase;
-    const animationPhase = phase === "preflop" ? "playerActing" : phase === "result" ? "resultBanner" : "idle";
+      : current.pendingAfterAnimation === "flop"
+        ? "flop"
+        : current.pendingAfterAnimation === "turn"
+          ? "turn"
+          : current.pendingAfterAnimation === "river"
+            ? "river"
+            : current.pendingAfterAnimation === "result"
+              ? "result"
+              : current.phase;
+    const animationPhase = bettingPhase(phase)
+      ? animationPhaseForBettingPhase(phase)
+      : phase === "result"
+        ? "resultBanner"
+        : "idle";
     setState({
       ...current,
       phase,
@@ -652,7 +927,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       animationEvents: [],
       pendingAfterAnimation: null,
     });
-  }, [setState]);
+  }, [resolveCpuAction, setState]);
 
   const playerSeat = state.playerSeatIndex === null
     ? null
