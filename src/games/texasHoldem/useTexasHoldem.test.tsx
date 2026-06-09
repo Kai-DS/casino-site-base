@@ -6,6 +6,7 @@ import type { GameEconomy, GameResultDraft } from "@/games/shared/economy";
 import type { Card, Rank, Suit } from "@/types/card";
 import { cardId } from "@/types/card";
 import type { Rate } from "@/types/casino";
+import * as cpuStrategy from "./logic/cpuStrategy";
 import { useTexasHoldem, type UseTexasHoldemReturn } from "./useTexasHoldem";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,6 +19,12 @@ const LOW: Rate = {
   betMin: 1,
   betMax: 5,
   blurb: "test",
+};
+
+const SHORT_CPU_RATE: Rate = {
+  ...LOW,
+  buyInMin: 4,
+  buyInMax: 20,
 };
 
 const c = (rank: Rank, suit: Suit): Card => ({ id: cardId(suit, rank), rank, suit });
@@ -58,6 +65,24 @@ const weakCpuDeck = (): Card[] => [
   c(3, "hearts"),
 ];
 
+const premiumSmallBlindDeck = (): Card[] => [
+  c(14, "spades"),
+  c(3, "clubs"),
+  c(4, "clubs"),
+  c(5, "clubs"),
+  c(6, "clubs"),
+  c(14, "hearts"),
+  c(8, "clubs"),
+  c(9, "clubs"),
+  c(10, "clubs"),
+  c(11, "clubs"),
+  c(12, "clubs"),
+  c(13, "clubs"),
+  c(2, "hearts"),
+  c(3, "hearts"),
+  c(4, "hearts"),
+];
+
 type TestEconomy = GameEconomy & {
   placeBet: ReturnType<typeof vi.fn<(amount: number) => boolean>>;
   settle: ReturnType<typeof vi.fn<(draft: GameResultDraft) => void>>;
@@ -86,6 +111,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) {
     act(() => root.unmount());
   }
+  vi.restoreAllMocks();
 });
 
 function renderHoldem({
@@ -152,6 +178,27 @@ function driveToPlayerTurn(h: ReturnType<typeof renderHoldem>, phase: UseTexasHo
     () => h.current.phase === phase && h.current.currentTurnSeatIndex === h.current.playerSeatIndex && h.current.animationEvents.length === 0,
     `${phase} player turn`,
   );
+}
+
+function driveToCpuThinking(h: ReturnType<typeof renderHoldem>, seatIndex: number) {
+  driveUntil(
+    h,
+    () => {
+      const event = h.current.animationEvents[0];
+      return event?.type === "CPU_THINKING" && event.seat === seatIndex;
+    },
+    `CPU ${seatIndex} thinking`,
+  );
+}
+
+function seatByIndex(h: ReturnType<typeof renderHoldem>, seatIndex: number) {
+  const seat = h.current.seats.find((candidate) => candidate.seatIndex === seatIndex);
+  if (!seat) throw new Error(`Seat ${seatIndex} not found`);
+  return seat;
+}
+
+function playerContinue(h: ReturnType<typeof renderHoldem>) {
+  return h.current.amountToCall > 0 ? h.current.call() : h.current.check();
 }
 
 describe("useTexasHoldem Phase 1/2", () => {
@@ -253,32 +300,35 @@ describe("useTexasHoldem Phase 1/2", () => {
     });
     expect(h.current.phase).toBe("flop");
     expect(h.current.communityCards).toHaveLength(3);
-    expect(h.current.currentBet).toBe(0);
+    expect(h.current.currentBet).toBe(4);
+    expect(h.current.amountToCall).toBe(4);
     expect(h.current.currentTurnSeatIndex).toBe(0);
 
     act(() => {
-      expect(h.current.check()).toEqual({ ok: true });
+      expect(playerContinue(h)).toEqual({ ok: true });
     });
     expect(h.current.phase).toBe("turn");
     expect(h.current.communityCards).toHaveLength(4);
+    expect(h.current.amountToCall).toBe(4);
     expect(h.current.currentTurnSeatIndex).toBe(0);
 
     act(() => {
-      expect(h.current.check()).toEqual({ ok: true });
+      expect(playerContinue(h)).toEqual({ ok: true });
     });
     expect(h.current.phase).toBe("river");
     expect(h.current.communityCards).toHaveLength(5);
+    expect(h.current.amountToCall).toBe(4);
     expect(h.current.currentTurnSeatIndex).toBe(0);
 
     act(() => {
-      expect(h.current.check()).toEqual({ ok: true });
+      expect(playerContinue(h)).toEqual({ ok: true });
     });
     expect(h.current.phase).toBe("result");
     expect(h.current.pot.amount).toBe(0);
     expect(h.current.lastResult?.reason).toBe("showdown");
     expect(h.current.lastResult?.winners.map((winner) => winner.seatIndex)).toEqual([0]);
-    expect(h.current.tableStack).toBe(108);
-    expect(h.economy.chips).toBe(1_008);
+    expect(h.current.tableStack).toBe(100 + h.current.lastResult!.playerProfit);
+    expect(h.economy.chips).toBe(1_000 + h.current.lastResult!.playerProfit);
   });
 
   it("waits for showdown/result animation acknowledgements before entering result", () => {
@@ -296,17 +346,17 @@ describe("useTexasHoldem Phase 1/2", () => {
     driveToPlayerTurn(h, "flop");
 
     act(() => {
-      expect(h.current.check()).toEqual({ ok: true });
+      expect(playerContinue(h)).toEqual({ ok: true });
     });
     driveToPlayerTurn(h, "turn");
 
     act(() => {
-      expect(h.current.check()).toEqual({ ok: true });
+      expect(playerContinue(h)).toEqual({ ok: true });
     });
     driveToPlayerTurn(h, "river");
 
     act(() => {
-      expect(h.current.check()).toEqual({ ok: true });
+      expect(playerContinue(h)).toEqual({ ok: true });
     });
     driveUntil(h, () => h.current.phase === "showdown" && h.current.animationEvents.length > 0, "showdown events");
 
@@ -347,11 +397,11 @@ describe("useTexasHoldem Phase 1/2", () => {
     expect(h.current.lastResult?.showdownHands).toEqual([]);
     expect(h.current.lastResult?.winningCategory).toBe("fold");
     expect(h.current.lastResult?.winners).toEqual([
-      expect.objectContaining({ seatIndex: 0, wonAmount: 7 }),
+      expect.objectContaining({ seatIndex: 0, wonAmount: 11, profit: 7 }),
     ]);
-    expect(h.current.lastResult?.totalPotAmount).toBe(7);
-    expect(h.current.tableStack).toBe(103);
-    expect(h.economy.chips).toBe(1_003);
+    expect(h.current.lastResult?.totalPotAmount).toBe(11);
+    expect(h.current.tableStack).toBe(107);
+    expect(h.economy.chips).toBe(1_007);
     expect(h.current.seats.find((seat) => seat.seatIndex === 1)?.tableStack).toBe(99);
     expect(h.current.seats.find((seat) => seat.seatIndex === 2)?.tableStack).toBe(98);
   });
@@ -386,5 +436,107 @@ describe("useTexasHoldem Phase 1/2", () => {
     });
 
     expect(h.current.raiseTo(3)).toMatchObject({ ok: false, reason: "INVALID_BET" });
+  });
+
+  it("resets other active seats after a CPU raise and updates chips through the pot path", () => {
+    const h = renderHoldem({ deck: premiumSmallBlindDeck, animationEnabled: true });
+
+    act(() => {
+      h.current.buyIn(100);
+      h.current.startHand();
+    });
+    driveToPlayerTurn(h, "preflop");
+
+    act(() => {
+      expect(h.current.raiseTo(4)).toEqual({ ok: true });
+    });
+    driveToCpuThinking(h, 1);
+
+    const beforeRaiser = seatByIndex(h, 1);
+    const potBeforeRaise = h.current.pot.amount;
+    act(() => {
+      h.current.onAnimationEventComplete(h.current.animationEvents[0]!.id);
+    });
+
+    const raiser = seatByIndex(h, 1);
+    const contribution = 6 - beforeRaiser.streetContribution;
+    expect(raiser.lastAction).toBe("raise");
+    expect(h.current.currentBet).toBe(6);
+    expect(raiser.hasActed).toBe(true);
+    expect(raiser.tableStack).toBe(beforeRaiser.tableStack - contribution);
+    expect(raiser.streetContribution).toBe(beforeRaiser.streetContribution + contribution);
+    expect(raiser.totalContribution).toBe(beforeRaiser.totalContribution + contribution);
+    expect(h.current.pot.amount).toBe(potBeforeRaise + contribution);
+
+    const otherActiveSeats = h.current.seats.filter((seat) => seat.id !== raiser.id && seat.status === "active");
+    expect(otherActiveSeats.length).toBeGreaterThan(0);
+    expect(otherActiveSeats.every((seat) => seat.hasActed === false)).toBe(true);
+  });
+
+  it("rejects a malformed CPU all-in without moving chips or contributions", () => {
+    const originalChooseCpuAction = cpuStrategy.chooseCpuAction;
+    const chooseSpy = vi.spyOn(cpuStrategy, "chooseCpuAction").mockImplementation((input) => {
+      if (input.seat.seatIndex === 1 && input.currentBet === 4) {
+        return { action: "allIn", amount: 2 };
+      }
+      return originalChooseCpuAction(input);
+    });
+    const h = renderHoldem({ deck: premiumSmallBlindDeck, animationEnabled: true });
+
+    act(() => {
+      h.current.buyIn(100);
+      h.current.startHand();
+    });
+    driveToPlayerTurn(h, "preflop");
+
+    act(() => {
+      expect(h.current.raiseTo(4)).toEqual({ ok: true });
+    });
+    driveToCpuThinking(h, 1);
+
+    const before = seatByIndex(h, 1);
+    const potBefore = h.current.pot.amount;
+    act(() => {
+      h.current.onAnimationEventComplete(h.current.animationEvents[0]!.id);
+    });
+
+    const after = seatByIndex(h, 1);
+    expect(chooseSpy).toHaveBeenCalled();
+    expect(after.lastAction).toBe("fold");
+    expect(after.status).toBe("folded");
+    expect(after.tableStack).toBe(before.tableStack);
+    expect(after.streetContribution).toBe(before.streetContribution);
+    expect(after.totalContribution).toBe(before.totalContribution);
+    expect(h.current.pot.amount).toBe(potBefore);
+  });
+
+  it("normalizes a CPU that spends its stack on call to allIn", () => {
+    const h = renderHoldem({
+      deck: premiumSmallBlindDeck,
+      animationEnabled: true,
+      rate: SHORT_CPU_RATE,
+    });
+
+    act(() => {
+      h.current.buyIn(20);
+      h.current.startHand();
+    });
+    driveToPlayerTurn(h, "preflop");
+
+    act(() => {
+      expect(h.current.raiseTo(4)).toEqual({ ok: true });
+    });
+    driveToCpuThinking(h, 1);
+
+    act(() => {
+      h.current.onAnimationEventComplete(h.current.animationEvents[0]!.id);
+    });
+
+    const caller = seatByIndex(h, 1);
+    expect(caller.lastAction).toBe("call");
+    expect(caller.tableStack).toBe(0);
+    expect(caller.status).toBe("allIn");
+    expect(caller.hasActed).toBe(true);
+    expect(h.current.seats.some((seat) => seat.status === "active" && seat.tableStack === 0)).toBe(false);
   });
 });

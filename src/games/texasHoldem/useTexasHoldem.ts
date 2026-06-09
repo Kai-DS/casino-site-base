@@ -618,7 +618,23 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       : current.seats.find((candidate) => candidate.seatIndex === current.currentTurnSeatIndex) ?? null;
     if (!seat || seat.isHuman || seat.status !== "active") return current;
 
-    const decision = chooseCpuAction({ seat, seats: current.seats, currentBet: current.currentBet, phase: current.phase });
+    const availableActions = calculateAvailableActions({
+      seats: current.seats,
+      playerSeatIndex: seat.seatIndex,
+      currentTurnSeatIndex: seat.seatIndex,
+      currentBet: current.currentBet,
+      bigBlind: config.bigBlind,
+      minRaise: config.minRaise,
+    });
+    const decision = chooseCpuAction({
+      seat,
+      seats: current.seats,
+      currentBet: current.currentBet,
+      bigBlind: config.bigBlind,
+      minRaise: config.minRaise,
+      phase: current.phase,
+      availableActions,
+    });
     if (decision.action === "check") {
       const checked = applyActionLabel(seat, "check");
       const seats = setSeat(current.seats, checked);
@@ -637,21 +653,103 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       );
     }
 
-    const placed = placeToPot({
-      seats: current.seats,
-      pot: current.pot,
-      playerId: seat.id,
-      amount: decision.amount,
-      economy: economyRef.current,
-    });
+    if (decision.action === "allIn") {
+      if (decision.amount !== seat.tableStack) {
+        const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
+        const seats = setSeat(current.seats, folded);
+        return prependAnimationEvents(
+          advanceAfterAction(current, seats, folded.seatIndex),
+          emitActionEvents(folded, "fold", 0),
+        );
+      }
+      const validation = validateAllIn(seat, current.seats, current.currentBet, config.bigBlind, config.minRaise);
+      if (!validation.ok) {
+        const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
+        const seats = setSeat(current.seats, folded);
+        return prependAnimationEvents(
+          advanceAfterAction(current, seats, folded.seatIndex),
+          emitActionEvents(folded, "fold", 0),
+        );
+      }
+      const placed = placeToPot({
+        seats: current.seats,
+        pot: current.pot,
+        playerId: seat.id,
+        amount: decision.amount,
+        economy: economyRef.current,
+      });
+      if (placed.ok) {
+        const allInSeat = applyActionLabel({ ...placed.seat, status: "allIn" }, "allIn");
+        const allInRaiseTo = seat.streetContribution + decision.amount;
+        const isRaise = current.currentBet === 0 || allInRaiseTo >= current.currentBet + config.minRaise;
+        const nextSeats = isRaise
+          ? resetOtherActivePlayersHasActed(setSeat(placed.seats, allInSeat), allInSeat.id)
+          : setSeat(placed.seats, allInSeat);
+        return prependAnimationEvents(
+          advanceAfterAction(
+            { ...current, pot: placed.pot, currentBet: isRaise ? allInRaiseTo : current.currentBet },
+            nextSeats,
+            allInSeat.seatIndex,
+          ),
+          emitActionEvents(allInSeat, "allIn", decision.amount, placed.pot.amount),
+        );
+      }
+    }
 
-    if (placed.ok) {
-      const called = applyActionLabel(placed.seat, "call");
-      const seats = setSeat(placed.seats, called);
-      return prependAnimationEvents(
-        advanceAfterAction({ ...current, pot: placed.pot }, seats, called.seatIndex),
-        emitActionEvents(called, "call", decision.amount, placed.pot.amount),
-      );
+    if (decision.action === "bet") {
+      const placed = placeToPot({
+        seats: current.seats,
+        pot: current.pot,
+        playerId: seat.id,
+        amount: decision.amount,
+        economy: economyRef.current,
+      });
+      if (placed.ok) {
+        const betSeat = applyActionLabel(placed.seat, "bet");
+        const nextSeats = resetOtherActivePlayersHasActed(setSeat(placed.seats, betSeat), betSeat.id);
+        return prependAnimationEvents(
+          advanceAfterAction({ ...current, pot: placed.pot, currentBet: decision.amount }, nextSeats, betSeat.seatIndex),
+          emitActionEvents(betSeat, "bet", decision.amount, placed.pot.amount),
+        );
+      }
+    }
+
+    if (decision.action === "raise") {
+      const contribution = decision.raiseTo - seat.streetContribution;
+      const placed = placeToPot({
+        seats: current.seats,
+        pot: current.pot,
+        playerId: seat.id,
+        amount: contribution,
+        economy: economyRef.current,
+      });
+      if (placed.ok) {
+        const raiseSeat = applyActionLabel(placed.seat, "raise");
+        const nextSeats = resetOtherActivePlayersHasActed(setSeat(placed.seats, raiseSeat), raiseSeat.id);
+        return prependAnimationEvents(
+          advanceAfterAction({ ...current, pot: placed.pot, currentBet: decision.raiseTo }, nextSeats, raiseSeat.seatIndex),
+          emitActionEvents(raiseSeat, "raise", contribution, placed.pot.amount),
+        );
+      }
+    }
+
+    if (decision.action === "call") {
+      const placed = placeToPot({
+        seats: current.seats,
+        pot: current.pot,
+        playerId: seat.id,
+        amount: decision.amount,
+        economy: economyRef.current,
+      });
+
+      if (placed.ok) {
+        const called = applyActionLabel(placed.seat, "call");
+        const seats = setSeat(placed.seats, called);
+        return prependAnimationEvents(
+          advanceAfterAction({ ...current, pot: placed.pot }, seats, called.seatIndex),
+          emitActionEvents(called, "call", decision.amount, placed.pot.amount),
+        );
+      }
     }
 
     const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
@@ -660,7 +758,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       advanceAfterAction(current, seats, folded.seatIndex),
       emitActionEvents(folded, "fold", 0),
     );
-  }, [advanceAfterAction, emitActionEvents]);
+  }, [advanceAfterAction, config.bigBlind, config.minRaise, emitActionEvents]);
 
   useEffect(() => {
     const current = stateRef.current;

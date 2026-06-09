@@ -1,16 +1,66 @@
-import type { HoldemPhase, HoldemSeat, PreflopStrength } from "../types";
-import { amountToCallForSeat, getHandContributionCap } from "./betting";
+import type { AvailableActions, CpuStyle, HoldemPhase, HoldemSeat, PreflopStrength } from "../types";
+import {
+  amountToCallForSeat,
+  getHandContributionCap,
+  maxRaiseToForSeat,
+  validateAllIn,
+} from "./betting";
 
 export type CpuDecision =
   | { action: "check" }
   | { action: "call"; amount: number }
+  | { action: "bet"; amount: number }
+  | { action: "raise"; raiseTo: number }
+  | { action: "allIn"; amount: number }
   | { action: "fold" };
 
 export interface CpuDecisionInput {
   seat: HoldemSeat;
   seats: readonly HoldemSeat[];
   currentBet: number;
+  bigBlind: number;
+  minRaise: number;
   phase?: HoldemPhase;
+  availableActions: AvailableActions;
+}
+
+function isAggressive(style: CpuStyle | undefined): boolean {
+  return style === "tightAggressive" || style === "looseAggressive";
+}
+
+function isLoose(style: CpuStyle | undefined): boolean {
+  return style === "loosePassive" || style === "looseAggressive";
+}
+
+function chooseBetAmount(input: CpuDecisionInput): CpuDecision {
+  const cap = getHandContributionCap(input.seats);
+  const maxAdditional = Math.max(0, cap - input.seat.totalContribution);
+  const preferred = isAggressive(input.seat.style) ? input.bigBlind * 2 : input.bigBlind;
+  const amount = Math.min(preferred, maxAdditional, input.seat.tableStack);
+
+  if (amount === input.seat.tableStack && input.availableActions.allIn.enabled) {
+    return { action: "allIn", amount };
+  }
+  if (input.availableActions.bet.enabled && amount >= input.bigBlind && amount < input.seat.tableStack) {
+    return { action: "bet", amount };
+  }
+  return { action: "check" };
+}
+
+function chooseRaiseTo(input: CpuDecisionInput): CpuDecision {
+  const maxRaiseTo = maxRaiseToForSeat(input.seat, input.seats);
+  const raiseTo = Math.min(input.currentBet + input.minRaise, maxRaiseTo);
+  const amount = raiseTo - input.seat.streetContribution;
+
+  if (amount === input.seat.tableStack && input.availableActions.allIn.enabled) {
+    return { action: "allIn", amount };
+  }
+  if (input.availableActions.raise.enabled && raiseTo >= input.currentBet + input.minRaise && amount < input.seat.tableStack) {
+    return { action: "raise", raiseTo };
+  }
+  return input.availableActions.call.enabled
+    ? { action: "call", amount: amountToCallForSeat(input.seat, input.currentBet) }
+    : { action: "fold" };
 }
 
 export function evaluatePreflopStrength(seat: HoldemSeat): PreflopStrength {
@@ -33,15 +83,44 @@ export function evaluatePreflopStrength(seat: HoldemSeat): PreflopStrength {
 
 export function chooseCpuAction(input: CpuDecisionInput): CpuDecision {
   const amountToCall = amountToCallForSeat(input.seat, input.currentBet);
-  if (amountToCall === 0) return { action: "check" };
+  const strength = input.phase === "preflop" ? evaluatePreflopStrength(input.seat) : "playable";
 
-  if (input.phase === "preflop" && evaluatePreflopStrength(input.seat) === "weak") {
+  if (amountToCall === 0) {
+    if (
+      input.currentBet > 0 &&
+      (strength === "premium" || (strength === "strong" && isAggressive(input.seat.style)))
+    ) {
+      return chooseRaiseTo(input);
+    }
+    if (
+      input.currentBet === 0 &&
+      input.phase !== "preflop" &&
+      input.availableActions.bet.enabled &&
+      isAggressive(input.seat.style)
+    ) {
+      return chooseBetAmount(input);
+    }
+    return { action: "check" };
+  }
+
+  if (input.phase === "preflop" && strength === "weak" && input.currentBet > input.bigBlind) {
     return { action: "fold" };
   }
 
-  const cap = getHandContributionCap(input.seats);
-  if (input.seat.tableStack >= amountToCall && input.seat.totalContribution + amountToCall <= cap) {
+  if (
+    (strength === "premium" || (strength === "strong" && isAggressive(input.seat.style))) &&
+    input.availableActions.raise.enabled
+  ) {
+    return chooseRaiseTo(input);
+  }
+
+  if (input.availableActions.call.enabled && (strength !== "weak" || isLoose(input.seat.style))) {
     return { action: "call", amount: amountToCall };
+  }
+
+  const allInResult = validateAllIn(input.seat, input.seats, input.currentBet, input.bigBlind, input.minRaise);
+  if (input.availableActions.allIn.enabled && allInResult.ok && strength === "premium") {
+    return { action: "allIn", amount: input.seat.tableStack };
   }
 
   return { action: "fold" };
