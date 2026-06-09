@@ -6,6 +6,7 @@ import { Button } from "@/components/common/Button";
 import { ChipDisplay } from "@/components/common/ChipDisplay";
 import { formatChips, formatSignedChips } from "@/utils/format";
 import { useTexasHoldem, type UseTexasHoldemReturn } from "@/games/texasHoldem/useTexasHoldem";
+import { TexasHoldemGame } from "@/games/texasHoldem/components/TexasHoldemGame";
 import type { ActionAvailability, HoldemActionKind, HoldemSeat } from "@/games/texasHoldem/types";
 import { useMockEconomy } from "../useMockEconomy";
 import {
@@ -24,6 +25,7 @@ export function TexasHoldemSandbox() {
   const [rate, setRate] = useState<Rate>(RATES[0]!);
   const [scenarioId, setScenarioId] = useState<HoldemSandboxScenarioId>("showdown-player-win");
   const [animationEnabled, setAnimationEnabled] = useState(false);
+  const [visual, setVisual] = useState(false);
   const economy = useMockEconomy(1000);
   const scenario = findHoldemSandboxScenario(scenarioId);
 
@@ -73,33 +75,49 @@ export function TexasHoldemSandbox() {
             />
             animation events
           </label>
+          <label
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition ${
+              visual ? "border-gold-500 bg-felt-700 text-gold" : "border-white/15 text-white/70"
+            }`}
+          >
+            <input type="checkbox" checked={visual} onChange={(event) => setVisual(event.target.checked)} />
+            Visual UI
+          </label>
         </div>
 
-        <div className="mb-4 flex flex-wrap items-center justify-center gap-1.5">
-          <span className="mr-1 text-xs uppercase tracking-wide text-white/40">Scenario:</span>
-          {HOLDEM_SANDBOX_SCENARIOS.map((candidate) => (
-            <button
-              key={candidate.id}
-              type="button"
-              onClick={() => setScenarioId(candidate.id)}
-              className={`focus-ring rounded border px-2 py-1 text-xs transition ${
-                scenarioId === candidate.id
-                  ? "border-emerald-400 bg-emerald-500/15 text-emerald-300"
-                  : "border-white/15 text-white/55 hover:bg-white/10"
-              }`}
-            >
-              {candidate.label}
-            </button>
-          ))}
-        </div>
+        {visual ? (
+          <div className="min-h-[640px]">
+            <TexasHoldemGame key={rate.id} rate={rate} economy={economy} animationEnabled />
+          </div>
+        ) : (
+          <>
+            <div className="mb-4 flex flex-wrap items-center justify-center gap-1.5">
+              <span className="mr-1 text-xs uppercase tracking-wide text-white/40">Scenario:</span>
+              {HOLDEM_SANDBOX_SCENARIOS.map((candidate) => (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  onClick={() => setScenarioId(candidate.id)}
+                  className={`focus-ring rounded border px-2 py-1 text-xs transition ${
+                    scenarioId === candidate.id
+                      ? "border-emerald-400 bg-emerald-500/15 text-emerald-300"
+                      : "border-white/15 text-white/55 hover:bg-white/10"
+                  }`}
+                >
+                  {candidate.label}
+                </button>
+              ))}
+            </div>
 
-        <HoldemSandboxHarness
-          key={`${rate.id}-${scenario.id}-${animationEnabled}`}
-          rate={rate}
-          scenarioId={scenario.id}
-          animationEnabled={animationEnabled}
-          economy={economy}
-        />
+            <HoldemSandboxHarness
+              key={`${rate.id}-${scenario.id}-${animationEnabled}`}
+              rate={rate}
+              scenarioId={scenario.id}
+              animationEnabled={animationEnabled}
+              economy={economy}
+            />
+          </>
+        )}
       </div>
     </div>
   );
