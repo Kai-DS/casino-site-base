@@ -35,6 +35,13 @@ type TexasHoldemGameProps = {
   animationEnabled?: boolean;
   rng?: RNG;
   deckProvider?: HoldemDeckProvider;
+  /** Production: auto-take a seat with this stack (the amount chosen in the lobby), skipping
+   *  the in-game buy-in overlay. Omit (sandbox) to buy in manually. */
+  initialBuyIn?: number;
+  /** Production: render a "← Lobby" affordance that leaves the table. */
+  onExit?: () => void;
+  /** Production: invoked when the player can't afford the table (opens the rescue flow). */
+  onRequestRescue?: () => void;
 };
 
 const BETTING_PHASES: ReadonlySet<HoldemPhase> = new Set(["preflop", "flop", "turn", "river"]);
@@ -72,7 +79,16 @@ function logEntryFor(event: AnimationEvent, seats: readonly HoldemSeat[]): Actio
   }
 }
 
-export function TexasHoldemGame({ rate, economy, animationEnabled = true, rng, deckProvider }: TexasHoldemGameProps) {
+export function TexasHoldemGame({
+  rate,
+  economy,
+  animationEnabled = true,
+  rng,
+  deckProvider,
+  initialBuyIn,
+  onExit,
+  onRequestRescue,
+}: TexasHoldemGameProps) {
   const game = useTexasHoldem({ rate, economy, animationEnabled, rng, deckProvider });
   const reducedMotion = usePrefersReducedMotion();
   const view = useHoldemAnimationQueue(game.animationEvents, game.onAnimationEventComplete, reducedMotion);
@@ -122,6 +138,16 @@ export function TexasHoldemGame({ rate, economy, animationEnabled = true, rng, d
   }, [rate, economy.chips]);
   const [rebuyOpen, setRebuyOpen] = useState(false);
 
+  // Production: auto-take a seat with the lobby-chosen stack, skipping the manual buy-in overlay.
+  const seatedRef = useRef(false);
+  useEffect(() => {
+    if (initialBuyIn == null || seatedRef.current) return;
+    if (game.phase !== "buyIn" && game.phase !== "unseated") return;
+    if (economy.chips < rate.buyInMin) return;
+    seatedRef.current = true;
+    game.buyIn(clampBuyIn(rate, initialBuyIn, economy.chips));
+  }, [initialBuyIn, game.phase, game.buyIn, rate, economy.chips]);
+
   const player = useMemo(
     () => game.seats.find((s) => s.seatIndex === game.playerSeatIndex) ?? null,
     [game.seats, game.playerSeatIndex],
@@ -140,9 +166,14 @@ export function TexasHoldemGame({ rate, economy, animationEnabled = true, rng, d
       {/* Top bar: chips / table stack / rate / blinds (spec §27) */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/40 px-3 py-2">
         <div className="flex items-center gap-3 text-sm">
+          {onExit && (
+            <Button size="sm" variant="ghost" onClick={onExit}>
+              ← Lobby
+            </Button>
+          )}
           <span className="font-display text-base text-[var(--gold-2)]">Texas Hold'em</span>
           <span className="rounded bg-white/10 px-2 py-0.5 text-xs uppercase tracking-wide text-white/70">{rate.label}</span>
-          <span className="text-xs text-[var(--text-mid)]">
+          <span className="hidden text-xs text-[var(--text-mid)] sm:inline">
             Blinds {formatChips(game.smallBlind)}/{formatChips(game.bigBlind)}
           </span>
         </div>
@@ -153,9 +184,15 @@ export function TexasHoldemGame({ rate, economy, animationEnabled = true, rng, d
           <span className="text-[var(--text-mid)]">
             Stack <span className="font-semibold tabular-nums text-[var(--gold-2)]">{formatChips(game.tableStack)}</span>
           </span>
-          <Button size="sm" variant="ghost" onClick={() => setRebuyOpen(true)}>
-            Re-buy
-          </Button>
+          {onRequestRescue && economy.chips < rate.buyInMin ? (
+            <Button size="sm" variant="danger" onClick={onRequestRescue}>
+              Get chips
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => setRebuyOpen(true)}>
+              Re-buy
+            </Button>
+          )}
         </div>
       </div>
 
@@ -221,9 +258,21 @@ export function TexasHoldemGame({ rate, economy, animationEnabled = true, rng, d
                 </Button>
               </div>
             ) : (
-              <p className="max-w-xs text-center text-sm text-red-200">
-                Not enough chips to sit at {rate.label} (need {formatChips(rate.buyInMin)}).
-              </p>
+              <div className="flex max-w-xs flex-col items-center gap-3 text-center">
+                <p className="text-sm text-red-200">
+                  Not enough chips to sit at {rate.label} (need {formatChips(rate.buyInMin)}).
+                </p>
+                {onRequestRescue && (
+                  <Button variant="danger" onClick={onRequestRescue}>
+                    Get chips
+                  </Button>
+                )}
+                {onExit && (
+                  <Button variant="ghost" size="sm" onClick={onExit}>
+                    ← Back to lobby
+                  </Button>
+                )}
+              </div>
             )}
           </Overlay>
         )}

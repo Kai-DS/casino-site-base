@@ -5,6 +5,7 @@ import { LobbyPage } from "@/pages/LobbyPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { NeonJackPage } from "@/pages/games/NeonJackPage";
 import { VideoPokerPage } from "@/pages/games/VideoPokerPage";
+import { TexasHoldemPage } from "@/pages/games/TexasHoldemPage";
 import { ComingSoonPage } from "@/pages/games/ComingSoonPage";
 import { AppShell } from "@/components/layout/AppShell";
 import { RouteErrorBoundary } from "@/components/layout/RouteErrorBoundary";
@@ -26,7 +27,7 @@ export const router = createBrowserRouter([
       { path: "/profile", element: <ProfilePage /> },
       { path: "/games/neonjack", element: <NeonJackPage /> },
       { path: "/games/video-poker", element: <VideoPokerPage /> },
-      { path: "/games/holdem", element: <ComingSoonPage id="holdem" /> },
+      { path: "/games/holdem", element: <TexasHoldemPage /> },
       { path: "/games/omaha", element: <ComingSoonPage id="omaha" /> },
     ],
   },
