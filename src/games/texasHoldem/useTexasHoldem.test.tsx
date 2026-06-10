@@ -672,7 +672,7 @@ describe("useTexasHoldem Phase 1/2", () => {
     expect(seatByIndex(h, 2).lastAction).toBe("fold");
   });
 
-  it("normalizes malformed CPU call amounts and does not reopen raise after a below-min-raise all-in", () => {
+  it("normalizes malformed CPU call amounts and blocks raise/all-in reopening after a below-min-raise all-in", () => {
     const originalChooseCpuAction = cpuStrategy.chooseCpuAction;
     vi.spyOn(cpuStrategy, "chooseCpuAction").mockImplementation((input) => {
       if (input.seat.seatIndex === 1 && input.currentBet === 4) {
@@ -738,6 +738,16 @@ describe("useTexasHoldem Phase 1/2", () => {
     expect(h.current.availableActions.call.enabled).toBe(true);
     expect(h.current.availableActions.raise).toEqual({ enabled: false, reason: "INVALID_BET" });
     expect(h.current.raiseTo(7)).toMatchObject({ ok: false, reason: "INVALID_BET" });
+    expect(h.current.availableActions.allIn).toMatchObject({ enabled: false, reason: "INVALID_BET" });
+    const playerBeforeAllInAttempt = seatByIndex(h, 0);
+    const potBeforeAllInAttempt = h.current.pot.amount;
+    expect(h.current.allIn()).toMatchObject({ ok: false, reason: "INVALID_BET" });
+    expect(seatByIndex(h, 0)).toMatchObject({
+      streetContribution: playerBeforeAllInAttempt.streetContribution,
+      totalContribution: playerBeforeAllInAttempt.totalContribution,
+      tableStack: playerBeforeAllInAttempt.tableStack,
+    });
+    expect(h.current.pot.amount).toBe(potBeforeAllInAttempt);
   });
 
   it("reopens betting when a CPU all-in is a full raise", () => {

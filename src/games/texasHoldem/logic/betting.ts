@@ -274,6 +274,8 @@ export function calculateAvailableActions(context: ActionContext): AvailableActi
   const amountToCall = amountToCallForSeat(seat, context.currentBet);
   const effectiveAllInAmount = getEffectiveAllInAmount(seat, context.seats);
   const maxRaiseTo = maxRaiseToForSeat(seat, context.seats);
+  const allInRaiseTo = seat.streetContribution + effectiveAllInAmount;
+  const allInWouldReopenRaise = seat.hasActed && allInRaiseTo > context.currentBet;
   const allInResult = validateAllIn(
     seat,
     context.seats,
@@ -298,6 +300,11 @@ export function calculateAvailableActions(context: ActionContext): AvailableActi
     : seat.hasActed || context.currentBet + context.minRaise > maxRaiseTo
       ? "INVALID_BET"
       : "INVALID_BET";
+  const allInReason = allInWouldReopenRaise
+    ? "INVALID_BET"
+    : allInResult.ok
+      ? "INVALID_BET"
+      : allInResult.reason;
 
   return {
     fold: enabled(),
@@ -311,9 +318,9 @@ export function calculateAvailableActions(context: ActionContext): AvailableActi
     raise: context.currentBet > 0 && !seat.hasActed && context.currentBet + context.minRaise <= maxRaiseTo
       ? enabled()
       : disabled(raiseReason),
-    allIn: allInResult.ok
+    allIn: allInResult.ok && !allInWouldReopenRaise
       ? { enabled: true, amount: effectiveAllInAmount }
-      : { enabled: false, reason: allInResult.reason, amount: effectiveAllInAmount },
+      : { enabled: false, reason: allInReason, amount: effectiveAllInAmount },
   };
 }
 

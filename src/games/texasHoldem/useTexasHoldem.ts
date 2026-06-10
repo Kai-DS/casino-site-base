@@ -974,6 +974,9 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     const validation = validateAllIn(guarded, current.seats, current.currentBet, config.bigBlind, config.minRaise, amount);
     if (!validation.ok) return validation;
     const allInRaiseTo = guarded.streetContribution + amount;
+    if (guarded.hasActed && allInRaiseTo > current.currentBet) {
+      return fail("INVALID_BET", "All-in額が不正です。");
+    }
     const placed = placeToPot({
       seats: current.seats,
       pot: current.pot,
