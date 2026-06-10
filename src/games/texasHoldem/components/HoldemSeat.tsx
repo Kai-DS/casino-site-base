@@ -1,11 +1,11 @@
 // games/texasHoldem/components/HoldemSeat.tsx
-// One seat around the felt: name + stack, dealer/blind badges, status, the turn indicator
-// (breathing glow + CPU progress ring, §24.5), the action label (§24.11), and its hole cards.
-// All values are read from the seat the logic gave us; nothing is recomputed here.
+// One player's nameplate + hole cards, placed OUTSIDE the felt (spec §24.1 redesign). Shows
+// name, stack (as chips), status, dealer/blind badges, the turn indicator (breathing glow +
+// CPU progress ring, §24.5) and the action label (§24.11). The street bet chips live on the
+// felt (a separate layer), not here. All values are read from the seat; nothing is recomputed.
 import type { Card, HoldemSeat as HoldemSeatModel } from "../types";
-import type { ActionLabel, ChipFly } from "./useHoldemAnimationQueue";
+import type { ActionLabel } from "./useHoldemAnimationQueue";
 import { actionLabel } from "./holdemLabels";
-import { seatSlot } from "./tableLayout";
 import { ChipStack } from "@/components/casino/ChipStack";
 import { HoleCards } from "./HoleCards";
 
@@ -22,7 +22,9 @@ type HoldemSeatProps = {
   label?: ActionLabel;
   thinking?: boolean;
   highlight?: Card[];
-  chipFly?: ChipFly | null;
+  hero?: boolean;
+  /** Render hole cards below the plaque (top seats) instead of above. */
+  cardsBelow?: boolean;
   reducedMotion?: boolean;
 };
 
@@ -34,9 +36,7 @@ const STATUS_LABEL: Partial<Record<HoldemSeatModel["status"], string>> = {
 };
 
 function Badge({ children, tone }: { children: string; tone: string }) {
-  return (
-    <span className={`rounded px-1 text-[9px] font-bold leading-4 ${tone}`}>{children}</span>
-  );
+  return <span className={`rounded px-1 text-[9px] font-bold leading-4 ${tone}`}>{children}</span>;
 }
 
 export function HoldemSeat({
@@ -52,86 +52,81 @@ export function HoldemSeat({
   label,
   thinking,
   highlight,
-  chipFly,
+  hero = false,
+  cardsBelow = false,
   reducedMotion = false,
 }: HoldemSeatProps) {
-  const slot = seatSlot(seat.seatIndex);
   const dimmed = seat.status === "folded" || seat.status === "busted" || seat.status === "sittingOut";
   const statusLabel = STATUS_LABEL[seat.status];
-  const flyVector = chipFly
-    ? { ["--fly-x" as string]: `${slot.fly.x}px`, ["--fly-y" as string]: `${slot.fly.y}px` }
-    : undefined;
+  const initial = seat.isHuman ? "YOU" : `C${seat.seatIndex}`;
+
+  const cards = (
+    <HoleCards
+      cards={seat.holeCards}
+      shownCount={shownHoleCount}
+      faceUp={faceUp}
+      dealingIndexes={dealingIndexes}
+      hero={hero}
+      reducedMotion={reducedMotion}
+      highlight={highlight}
+    />
+  );
 
   return (
-    <div className={`relative flex flex-col items-center gap-1 ${dimmed ? "opacity-55 grayscale" : ""}`}>
+    <div className={`relative flex flex-col items-center gap-1.5 ${dimmed ? "opacity-50 grayscale" : ""}`}>
       {/* Action label (§24.11) */}
       {label && (
-        <div className="holdem-label-pop absolute -top-6 z-20 rounded-full border border-[var(--rail)]/50 bg-black/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--gold-2)]">
+        <div className="holdem-label-pop absolute -top-7 z-20 whitespace-nowrap rounded-full border border-[var(--rail)]/60 bg-black/85 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-[var(--gold-2)] shadow-[0_2px_8px_rgba(0,0,0,0.5)]">
           {actionLabel(label.action, label.amount)}
         </div>
       )}
 
-      {/* Hole cards sit above the nameplate (hero gets larger cards). */}
-      <HoleCards
-        cards={seat.holeCards}
-        shownCount={shownHoleCount}
-        faceUp={faceUp}
-        dealingIndexes={dealingIndexes}
-        hero={slot.hero}
-        reducedMotion={reducedMotion}
-        highlight={highlight}
-      />
+      {!cardsBelow && cards}
 
       {/* Nameplate */}
       <div
-        className={`relative flex min-w-[5.5rem] flex-col items-center rounded-xl border px-2.5 py-1.5 backdrop-blur-sm transition-colors ${
+        className={`relative flex items-center gap-2 rounded-2xl border px-2.5 py-1.5 backdrop-blur-sm transition-colors ${
           isWinner
-            ? "border-[var(--gold-2)] bg-[var(--gold)]/15"
+            ? "border-[var(--gold-2)] bg-[var(--gold)]/20 shadow-[0_0_22px_rgba(244,214,128,0.55)]"
             : isTurn
-              ? "border-[var(--gold-2)]/70 bg-black/55"
-              : "border-white/12 bg-black/45"
+              ? "border-[var(--gold-2)]/80 bg-black/65"
+              : "border-white/12 bg-black/55"
         } ${isTurn && !reducedMotion ? "holdem-turn-glow" : ""}`}
       >
         {/* CPU thinking progress ring (§24.5) */}
         {thinking && !reducedMotion && (
-          <span className="pointer-events-none absolute -inset-1 rounded-2xl ring-2 ring-[var(--neon)]/40">
-            <span className="holdem-spin absolute inset-0 rounded-2xl border-2 border-transparent border-t-[var(--neon)]" />
+          <span className="pointer-events-none absolute -inset-1 rounded-3xl">
+            <span className="holdem-spin absolute inset-0 rounded-3xl border-2 border-transparent border-t-[var(--neon)]" />
           </span>
         )}
 
-        <div className="flex items-center gap-1">
-          <span className="max-w-[5rem] truncate text-xs font-semibold text-[var(--text-hi)]">{seat.name}</span>
-          {isDealer && <Badge tone="bg-white text-black">D</Badge>}
-          {isSmallBlind && <Badge tone="bg-sky-500 text-white">SB</Badge>}
-          {isBigBlind && <Badge tone="bg-amber-500 text-black">BB</Badge>}
+        {/* avatar token */}
+        <span
+          className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-[10px] font-bold ${
+            seat.isHuman ? "bg-[var(--gold)] text-black" : "bg-white/12 text-white/80"
+          } ring-1 ring-black/30`}
+        >
+          {initial}
+        </span>
+
+        <div className="flex min-w-0 flex-col leading-tight">
+          <div className="flex items-center gap-1">
+            <span className="max-w-[6rem] truncate text-xs font-semibold text-[var(--text-hi)]">{seat.name}</span>
+            {isDealer && <Badge tone="bg-white text-black">D</Badge>}
+            {isSmallBlind && <Badge tone="bg-sky-500 text-white">SB</Badge>}
+            {isBigBlind && <Badge tone="bg-amber-500 text-black">BB</Badge>}
+          </div>
+          <ChipStack amount={seat.tableStack} size="sm" />
         </div>
 
-        <ChipStack amount={seat.tableStack} size="sm" />
-
         {statusLabel && (
-          <span className="text-[9px] font-bold uppercase tracking-wide text-[var(--text-dim)]">{statusLabel}</span>
-        )}
-
-        {/* This seat's street contribution sitting in front of it */}
-        {seat.streetContribution > 0 && (
-          <div className="absolute -bottom-3 left-1/2 -translate-x-1/2">
-            <ChipStack amount={seat.streetContribution} size="sm" showAmount={false} />
-          </div>
+          <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/80 px-2 text-[9px] font-bold uppercase tracking-wide text-[var(--text-mid)]">
+            {statusLabel}
+          </span>
         )}
       </div>
 
-      {/* Flying chips to/from the pot (§24.4) */}
-      {chipFly && !reducedMotion && (
-        <div
-          key={chipFly.key}
-          className={`pointer-events-none absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 ${
-            chipFly.kind === "toPot" ? "holdem-chip-fly" : "holdem-chip-award"
-          }`}
-          style={flyVector}
-        >
-          <ChipStack amount={chipFly.amount} size="sm" showAmount={false} />
-        </div>
-      )}
+      {cardsBelow && cards}
     </div>
   );
 }

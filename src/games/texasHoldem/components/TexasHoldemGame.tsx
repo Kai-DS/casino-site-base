@@ -18,7 +18,7 @@ import type { AnimationEvent, HoldemDeckProvider, HoldemPhase, HoldemSeat, RNG, 
 import { usePrefersReducedMotion } from "./motion";
 import { useHoldemAnimationQueue } from "./useHoldemAnimationQueue";
 import { actionLabel } from "./holdemLabels";
-import { seatSlot } from "./tableLayout";
+import { seatSlot, FELT_INSET } from "./tableLayout";
 import { PokerTable } from "./PokerTable";
 import { HoldemSeat as Seat } from "./HoldemSeat";
 import { CommunityCards } from "./CommunityCards";
@@ -196,9 +196,63 @@ export function TexasHoldemGame({
         </div>
       </div>
 
-      {/* Table */}
+      {/* Table stage — players ring the OUTSIDE of the felt; inside is community / pot / bet chips */}
       <div className="relative flex-1">
-        <PokerTable>
+        <div className="holdem-stage relative mx-auto w-full max-w-5xl" style={{ aspectRatio: "16 / 8.6" }}>
+          {/* felt region (inset); seats sit outside this box */}
+          <div
+            className="absolute"
+            style={{
+              left: `${FELT_INSET.left}%`,
+              right: `${FELT_INSET.right}%`,
+              top: `${FELT_INSET.top}%`,
+              bottom: `${FELT_INSET.bottom}%`,
+            }}
+          >
+            <PokerTable>
+              {/* pot above, community board as the centrepiece */}
+              <div className="absolute left-1/2 top-[28%] -translate-x-1/2 -translate-y-1/2">
+                <PotDisplay amount={game.pot.amount} pulseKey={view.potPulseKey} reducedMotion={reducedMotion} />
+              </div>
+              <div className="absolute left-1/2 top-[56%] -translate-x-1/2 -translate-y-1/2">
+                <CommunityCards
+                  cards={game.communityCards}
+                  activeEvent={view.activeEvent}
+                  reducedMotion={reducedMotion}
+                  highlight={communityHighlight}
+                />
+              </div>
+
+              {/* each seat's street bet chips, just inside the rail (+ chip-to-pot flight) */}
+              {game.seats.map((seat) => {
+                const slot = seatSlot(seat.seatIndex);
+                const fly = view.chipFly?.seat === seat.seatIndex ? view.chipFly : null;
+                if (seat.streetContribution <= 0 && !fly) return null;
+                return (
+                  <div
+                    key={`bet-${seat.id}`}
+                    className="absolute -translate-x-1/2 -translate-y-1/2"
+                    style={{ left: `${slot.bet.left}%`, top: `${slot.bet.top}%` }}
+                  >
+                    {seat.streetContribution > 0 && <ChipStack amount={seat.streetContribution} size="sm" />}
+                    {fly && !reducedMotion && (
+                      <div
+                        key={fly.key}
+                        className={`pointer-events-none absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 ${
+                          fly.kind === "toPot" ? "holdem-chip-fly" : "holdem-chip-award"
+                        }`}
+                        style={{ ["--fly-x" as string]: `${slot.fly.x}px`, ["--fly-y" as string]: `${slot.fly.y}px` }}
+                      >
+                        <ChipStack amount={fly.amount} size="sm" showAmount={false} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </PokerTable>
+          </div>
+
+          {/* seats OUTSIDE the felt */}
           {game.seats.map((seat) => {
             const slot = seatSlot(seat.seatIndex);
             const shownHoleCount = isDealing
@@ -212,7 +266,7 @@ export function TexasHoldemGame({
               <div
                 key={seat.id}
                 className="absolute"
-                style={{ left: `${slot.left}%`, top: `${slot.top}%`, transform: "translate(-50%, -50%)" }}
+                style={{ left: `${slot.seat.left}%`, top: `${slot.seat.top}%`, transform: "translate(-50%, -50%)" }}
               >
                 <Seat
                   seat={seat}
@@ -227,24 +281,14 @@ export function TexasHoldemGame({
                   label={view.actionLabelBySeat.get(seat.seatIndex)}
                   thinking={view.thinkingSeat === seat.seatIndex}
                   highlight={view.highlightBySeat.get(seat.seatIndex)}
-                  chipFly={view.chipFly?.seat === seat.seatIndex ? view.chipFly : null}
+                  hero={slot.hero}
+                  cardsBelow={slot.cardsBelow}
                   reducedMotion={reducedMotion}
                 />
               </div>
             );
           })}
-
-          {/* Community + pot in the centre */}
-          <div className="absolute left-1/2 top-[44%] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2">
-            <CommunityCards
-              cards={game.communityCards}
-              activeEvent={view.activeEvent}
-              reducedMotion={reducedMotion}
-              highlight={communityHighlight}
-            />
-            <PotDisplay amount={game.pot.amount} pulseKey={view.potPulseKey} reducedMotion={reducedMotion} />
-          </div>
-        </PokerTable>
+        </div>
 
         {/* Overlays: buy-in / deal / result */}
         {(game.phase === "buyIn" || game.phase === "unseated") && (
@@ -311,7 +355,7 @@ export function TexasHoldemGame({
           maxRaiseTo={game.maxRaiseTo}
           bigBlind={game.bigBlind}
           pot={game.pot.amount}
-          tableStack={game.tableStack}
+          allInAmount={game.availableActions.allIn.amount ?? game.effectiveAllInAmount}
           streetContribution={player?.streetContribution ?? 0}
           onFold={() => act(() => game.fold())}
           onCheck={() => act(() => game.check())}

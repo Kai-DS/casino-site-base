@@ -40,7 +40,7 @@ function renderControls(available: AvailableActions) {
         maxRaiseTo={100}
         bigBlind={2}
         pot={3}
-        tableStack={100}
+        allInAmount={100}
         streetContribution={0}
         onFold={noop}
         onCheck={noop}
@@ -75,7 +75,7 @@ afterEach(() => {
 describe("HoldemControls UI lock", () => {
   it("disables every action while an animation is playing (spec §26.2 / §29 lock)", () => {
     renderControls(ALL_ANIMATING);
-    for (const label of ["Fold", "Check", "Call", "Bet", "Raise", "All-in"]) {
+    for (const label of ["Fold", "Check", "Call", "Bet", "Raise", "3-Bet", "All-in"]) {
       expect(buttonByText(label)?.disabled, label).toBe(true);
     }
   });
@@ -86,6 +86,8 @@ describe("HoldemControls UI lock", () => {
     expect(buttonByText("Call")?.disabled).toBe(false);
     expect(buttonByText("Raise")?.disabled).toBe(false);
     expect(buttonByText("All-in")?.disabled).toBe(false);
+    // 3-Bet is a preset over raiseTo — enabled exactly when raise is.
+    expect(buttonByText("3-Bet")?.disabled).toBe(false);
 
     const check = buttonByText("Check");
     expect(check?.disabled).toBe(true);

@@ -32,8 +32,15 @@ export const SPRING = {
 /** Stagger / hold values from §24 (centralised so components never hardcode them). */
 export const STAGGER = {
   hole: 80, // §24.2 hole-card deal stagger
-  community: 120, // §24.3 flop flip stagger
+  community: 140, // §24.3 community deal/flip stagger
   showdown: 250, // §24.7 showdown reveal stagger
+} as const;
+
+/** Community card "deal then flip" timing (left→right). Drives CommunityCards + the flop gate. */
+export const COMMUNITY = {
+  stagger: 140, // gap between consecutive cards (left→right)
+  dealMs: 320, // slide-in (deal) duration per card
+  flipOffset: 60, // flip starts this long after the card lands
 } as const;
 
 export const HOLD = {
@@ -62,9 +69,10 @@ export function durationFor(event: AnimationEvent, reducedMotion: boolean): numb
     case "DEAL_HOLE":
       return STAGGER.hole;
     case "REVEAL_FLOP":
-      return DURATION.slow;
+      // 3 cards dealt + flipped left→right within this single event window.
+      return 2 * COMMUNITY.stagger + COMMUNITY.dealMs + COMMUNITY.flipOffset + 360;
     case "REVEAL_TURN":
-      return DURATION.slow;
+      return COMMUNITY.dealMs + COMMUNITY.flipOffset + 360;
     case "REVEAL_RIVER":
       return DURATION.dramatic;
     case "CPU_THINKING":

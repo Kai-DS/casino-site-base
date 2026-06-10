@@ -193,6 +193,21 @@
   }
 }
 
+/* Community card dealt in from the deck origin (left→right), before it flips. */
+@keyframes holdemCardDeal {
+  from {
+    opacity: 0;
+    transform: translate(var(--deal-x, 0), var(--deal-y, -180px)) rotate(var(--deal-rot, -8deg)) scale(0.92);
+  }
+  55% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+}
+
 @keyframes holdemRevealIn {
   from {
     opacity: 0;
@@ -291,19 +306,33 @@
 }
 
 @layer components {
-  /* §23.1 green felt — radial-gradient + brass rail + inner soft shadow + vignette */
-  .holdem-felt {
-    background:
-      radial-gradient(ellipse at 50% 42%, var(--felt-center) 0%, var(--felt-edge) 78%);
-    box-shadow:
-      inset 0 0 120px rgba(0, 0, 0, 0.55),
-      0 0 0 12px var(--rail),
-      0 0 0 14px rgba(0, 0, 0, 0.35),
-      0 36px 70px rgba(0, 0, 0, 0.55);
-    border: 1px solid rgba(0, 0, 0, 0.3);
-    border-radius: 50% / 42%;
+  /* §23.2 pseudo-3D stage; interactive layers stay flat for hit-testing */
+  .holdem-stage {
+    perspective: 1500px;
   }
-  /* subtle felt texture + vignette overlay */
+  .holdem-tilt {
+    transform: rotateX(6deg);
+    transform-style: preserve-3d;
+  }
+  /* Stadium (capsule) brass rail — straight top/bottom, semicircular ends. */
+  .holdem-rail {
+    border-radius: 9999px;
+    background: linear-gradient(180deg, var(--rail-hi) 0%, #d9b24c 40%, var(--rail) 68%, #7a5a11 100%);
+    box-shadow:
+      0 30px 64px rgba(0, 0, 0, 0.7),
+      inset 0 2px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -4px 10px rgba(0, 0, 0, 0.55);
+  }
+  /* §23.1 green felt — stadium, radial felt + inner soft shadow + vignette */
+  .holdem-felt {
+    border-radius: 9999px;
+    background:
+      radial-gradient(120% 92% at 50% 38%, var(--felt-center) 0%, var(--felt-edge) 66%, #06311e 100%);
+    box-shadow:
+      inset 0 0 100px rgba(0, 0, 0, 0.6),
+      inset 0 0 0 2px rgba(0, 0, 0, 0.4),
+      inset 0 8px 26px rgba(0, 0, 0, 0.5);
+  }
   .holdem-felt::before {
     content: "";
     position: absolute;
@@ -311,33 +340,29 @@
     border-radius: inherit;
     pointer-events: none;
     background:
-      radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.4) 100%),
-      repeating-conic-gradient(rgba(255, 255, 255, 0.012) 0deg 2deg, transparent 2deg 4deg);
+      radial-gradient(120% 92% at 50% 42%, transparent 52%, rgba(0, 0, 0, 0.45) 100%),
+      repeating-conic-gradient(rgba(255, 255, 255, 0.014) 0deg 2deg, transparent 2deg 4deg);
   }
-  /* §23.3 ambient centre glow that breathes very slowly (~6s) */
+  /* §23.3 ambient centre spotlight that breathes very slowly (~6s) */
   .holdem-felt::after {
     content: "";
     position: absolute;
     inset: 0;
     border-radius: inherit;
     pointer-events: none;
-    background: radial-gradient(ellipse at 50% 42%, rgba(233, 196, 106, 0.10), transparent 55%);
+    background: radial-gradient(60% 50% at 50% 40%, rgba(255, 246, 214, 0.12), transparent 60%);
     animation: holdemAmbient 6s ease-in-out infinite;
   }
   .holdem-bet-line {
     border: 2px solid var(--felt-line);
-    border-radius: 50%;
-  }
-  /* §23.2 pseudo-3D stage; interactive layers stay flat for hit-testing */
-  .holdem-stage {
-    perspective: 1200px;
-  }
-  .holdem-tilt {
-    transform: rotateX(8deg);
-    transform-style: preserve-3d;
+    border-radius: 9999px;
+    box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.25);
   }
   .holdem-backdrop {
-    background: linear-gradient(180deg, var(--bg-navy) 0%, var(--bg-deep) 100%);
+    background:
+      radial-gradient(120% 75% at 50% 32%, rgba(20, 46, 36, 0.6), transparent 58%),
+      radial-gradient(70% 50% at 50% 26%, rgba(233, 196, 106, 0.07), transparent 55%),
+      linear-gradient(180deg, #0a1410 0%, #05080b 100%);
   }
 
   .holdem-turn-glow {
@@ -345,6 +370,10 @@
   }
   .holdem-deal-in {
     animation: holdemDealIn 0.28s var(--ease-card, cubic-bezier(0.34, 1.56, 0.64, 1)) both;
+  }
+  .holdem-card-deal {
+    animation: holdemCardDeal var(--deal-dur, 0.32s) cubic-bezier(0.34, 1.4, 0.64, 1) both;
+    animation-delay: var(--deal-delay, 0s);
   }
   .holdem-reveal-in {
     animation: holdemRevealIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -377,8 +406,10 @@
 
   /* §24.2/24.3/24.7: flip used for hero deal, community reveal, showdown CPU reveals */
   .holdem-flip {
-    position: relative;
+    position: absolute;
+    inset: 0;
     width: 100%;
+    height: 100%;
     transform-style: preserve-3d;
     transition: transform 0.36s cubic-bezier(0.4, 0, 0.2, 1);
     transform: rotateY(180deg);

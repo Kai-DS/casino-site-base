@@ -103,5 +103,6 @@ describe("TexasHoldemGame end-to-end", () => {
     expect(reachedResult).toBe(true);
     // The human settled at least one play (won or lost) — economy was driven through the UI.
     expect(economy.log.length).toBeGreaterThan(0);
-  });
+    // Heavier fake-timer loop (longer community reveals + per-card timers) → allow more wall time.
+  }, 20000);
 });
