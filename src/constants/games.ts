@@ -6,7 +6,7 @@ export const GAMES: readonly GameInfo[] = [
     id: "neonjack",
     title: "NEON JACK",
     description: "Juggler-style pachislot. Fixed 3-medal bet, neon reels.",
-    status: "available",
+    status: "comingSoon",
     cardRank: "A",
     cardSuit: "spade",
     path: "/games/neonjack",
