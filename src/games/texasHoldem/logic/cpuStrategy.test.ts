@@ -59,24 +59,24 @@ describe("cpuStrategy", () => {
     expect(evaluatePreflopStrength(seat({ holeCards: [c(9, "spades"), c(2, "hearts")] }))).toBe("weak");
   });
 
-  it("checks for free and calls only inside stack/cap limits", () => {
+  it("checks for free and calls only when the action contract allows it", () => {
     const cpu = seat({ streetContribution: 2, totalContribution: 2 });
     expect(choose({ seat: cpu, currentBet: 2 }))
       .toEqual({ action: "check" });
 
     const caller = seat({ streetContribution: 0, totalContribution: 0, tableStack: 10 });
-    expect(choose({ seat: caller, currentBet: 4, availableActions: actions({ raise: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" } }) }))
+    expect(choose({ seat: caller, currentBet: 4, availableActions: actions({ raise: { enabled: false, reason: "INVALID_BET" } }) }))
       .toEqual({ action: "call", amount: 4 });
 
-    const capped = seat({ streetContribution: 0, totalContribution: 0, tableStack: 100 });
+    const blocked = seat({ streetContribution: 0, totalContribution: 0, tableStack: 100 });
     expect(choose({
-      seat: capped,
-      seats: [capped, seat({ id: "short", seatIndex: 2, tableStack: 2 })],
+      seat: blocked,
+      seats: [blocked, seat({ id: "short", seatIndex: 2, tableStack: 2 })],
       currentBet: 4,
       availableActions: actions({
-        call: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" },
-        raise: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" },
-        allIn: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" },
+        call: { enabled: false, reason: "INVALID_BET" },
+        raise: { enabled: false, reason: "INVALID_BET" },
+        allIn: { enabled: false, reason: "INVALID_BET" },
       }),
     }))
       .toEqual({ action: "fold" });
@@ -89,7 +89,7 @@ describe("cpuStrategy", () => {
       .toEqual({ action: "fold" });
   });
 
-  it("raises premium hands without exceeding the cap", () => {
+  it("raises premium hands without exceeding the effective amount", () => {
     const premium = seat({
       style: "tightAggressive",
       holeCards: [c(14, "spades"), c(14, "hearts")],
@@ -110,11 +110,11 @@ describe("cpuStrategy", () => {
       seat: aggressive,
       currentBet: 0,
       phase: "flop",
-      availableActions: actions({ bet: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" } }),
+      availableActions: actions({ bet: { enabled: false, reason: "INVALID_BET" } }),
     })).toEqual({ action: "check" });
   });
 
-  it("uses legal all-in instead of pseudo all-in when the chosen raise consumes the stack", () => {
+  it("uses legal all-in when the chosen raise consumes the stack", () => {
     const premiumShort = seat({
       style: "tightAggressive",
       holeCards: [c(14, "spades"), c(14, "hearts")],
@@ -127,8 +127,25 @@ describe("cpuStrategy", () => {
       .toEqual({ action: "allIn", amount: 4 });
   });
 
-  it("does not choose forbidden-zone all-in when the action contract disables all-in", () => {
-    const betweenCallAndMinRaise = seat({
+  it("uses the effective all-in amount when an aggressive bet consumes the effective stack", () => {
+    const chipLeader = seat({
+      style: "looseAggressive",
+      holeCards: [c(8, "spades"), c(7, "spades")],
+      tableStack: 100,
+    });
+    const shortOpponent = seat({ id: "short", seatIndex: 2, tableStack: 3 });
+
+    expect(choose({
+      seat: chipLeader,
+      seats: [chipLeader, shortOpponent],
+      currentBet: 0,
+      phase: "flop",
+      availableActions: actions({ allIn: { enabled: true, amount: 3 } }),
+    })).toEqual({ action: "allIn", amount: 3 });
+  });
+
+  it("does not choose all-in when the action contract disables all-in", () => {
+    const betweenCallAndFullRaise = seat({
       style: "tightAggressive",
       holeCards: [c(14, "spades"), c(14, "hearts")],
       tableStack: 5,
@@ -137,13 +154,13 @@ describe("cpuStrategy", () => {
     });
 
     expect(choose({
-      seat: betweenCallAndMinRaise,
+      seat: betweenCallAndFullRaise,
       currentBet: 5,
       minRaise: 2,
       phase: "preflop",
       availableActions: actions({
-        raise: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" },
-        allIn: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" },
+        raise: { enabled: false, reason: "INVALID_BET" },
+        allIn: { enabled: false, reason: "INVALID_BET" },
       }),
     })).not.toMatchObject({ action: "allIn" });
 
@@ -162,8 +179,8 @@ describe("cpuStrategy", () => {
       phase: "preflop",
       availableActions: actions({
         call: { enabled: false, reason: "INSUFFICIENT_TABLE_STACK" },
-        raise: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" },
-        allIn: { enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" },
+        raise: { enabled: false, reason: "INVALID_BET" },
+        allIn: { enabled: false, reason: "INVALID_BET" },
       }),
     })).not.toMatchObject({ action: "allIn" });
   });

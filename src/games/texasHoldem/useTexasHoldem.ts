@@ -5,7 +5,7 @@ import {
   applyActionLabel,
   calculateActionMetrics,
   calculateAvailableActions,
-  getHandContributionCap,
+  getEffectiveAllInAmount,
   isBettingRoundComplete,
   isContender,
   nextActionSeatIndex,
@@ -114,7 +114,7 @@ function makeInitialState(options: UseTexasHoldemOptions): HoldemState {
     currentTurnSeatIndex: null,
     deck: [],
     communityCards: [],
-    pot: { amount: 0 },
+    pot: { amount: 0, sidePots: [] },
     currentBet: 0,
     minRaise: config.minRaise,
     lastResult: null,
@@ -172,6 +172,7 @@ function resetSeatForHand(seat: HoldemSeat, bigBlind: number, rate: UseTexasHold
     streetContribution: 0,
     totalContribution: 0,
     hasActed: false,
+    effectiveAllInLocked: false,
     lastAction: undefined,
     status: tableStack >= bigBlind ? "active" : "sittingOut",
   };
@@ -212,12 +213,25 @@ function resetSeatsForNewStreet(seats: readonly HoldemSeat[]): HoldemSeat[] {
   return seats.map((seat) => ({
     ...seat,
     streetContribution: 0,
-    hasActed: seat.status !== "active",
+    hasActed: seat.status !== "active" || Boolean(seat.effectiveAllInLocked),
   }));
 }
 
 function prependAnimationEvents(state: HoldemState, events: AnimationEvent[]): HoldemState {
   return { ...state, animationEvents: [...events, ...state.animationEvents] };
+}
+
+function lockSeatAfterEffectiveAllIn(seat: HoldemSeat): HoldemSeat {
+  if (seat.tableStack === 0) return { ...seat, status: "allIn", effectiveAllInLocked: false };
+  return { ...seat, status: "active", effectiveAllInLocked: true, hasActed: true };
+}
+
+function isTerminalContender(seat: HoldemSeat): boolean {
+  return seat.status === "allIn" || Boolean(seat.effectiveAllInLocked);
+}
+
+function isFullRaiseTo(currentBet: number, raiseTo: number, bigBlind: number, minRaise: number): boolean {
+  return currentBet === 0 ? raiseTo >= bigBlind : raiseTo >= currentBet + minRaise;
 }
 
 export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemReturn {
@@ -309,7 +323,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       return fail("NOT_SEATED", "ブラインドを設定できる席がありません。");
     }
 
-    let pot: Pot = { amount: 0 };
+    let pot: Pot = { amount: 0, sidePots: [] };
     const events: AnimationEvent[] = [];
     const postBlind = (seatIndex: number, amount: number): ActionResult => {
       const blindSeat = seats.find((seat) => seat.seatIndex === seatIndex);
@@ -428,7 +442,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       phase: queuedEvents.length > 0 ? "settling" : "result",
       animationPhase: queuedEvents.length > 0 ? "settlingPot" : "resultBanner",
       seats: applySettlementsToSeats(seats, result.settlements),
-      pot: { amount: 0 },
+      pot: { amount: 0, sidePots: result.sidePots },
       currentTurnSeatIndex: null,
       lastResult: result,
       animationEvents: queuedEvents,
@@ -502,7 +516,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
         currentTurnSeatIndex: null,
         communityCards,
         deck,
-        pot: { amount: 0 },
+        pot: { amount: 0, sidePots: result.sidePots },
         lastResult: result,
         animationEvents: queuedEvents,
         pendingAfterAnimation: queuedEvents.length > 0 ? "result" : null,
@@ -585,7 +599,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     const contenders = seats.filter(isContender);
     if (contenders.length === 1) return finishFoldHand(current, seats);
     const actedCurrent = { ...current, seats };
-    if (contenders.every((seat) => seat.status === "allIn")) {
+    if (contenders.every(isTerminalContender)) {
       return drawMissingCommunityForShowdown(actedCurrent);
     }
     if (isBettingRoundComplete(seats, current.currentBet)) {
@@ -595,10 +609,15 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       if (current.phase === "river") return resolveShowdown(actedCurrent, current.communityCards, current.deck);
     }
 
+    const nextTurnSeatIndex = nextActionSeatIndex(seats, actorSeatIndex);
+    if (nextTurnSeatIndex === null) {
+      return drawMissingCommunityForShowdown({ ...current, seats });
+    }
+
     return {
       ...current,
       seats,
-      currentTurnSeatIndex: nextActionSeatIndex(seats, actorSeatIndex),
+      currentTurnSeatIndex: nextTurnSeatIndex,
     };
   }, [dealNextStreet, drawMissingCommunityForShowdown, finishFoldHand, resolveShowdown]);
 
@@ -654,7 +673,8 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     }
 
     if (decision.action === "allIn") {
-      if (decision.amount !== seat.tableStack) {
+      const effectiveAllInAmount = getEffectiveAllInAmount(seat, current.seats);
+      if (decision.amount !== effectiveAllInAmount) {
         const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
         const seats = setSeat(current.seats, folded);
         return prependAnimationEvents(
@@ -662,7 +682,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
           emitActionEvents(folded, "fold", 0),
         );
       }
-      const validation = validateAllIn(seat, current.seats, current.currentBet, config.bigBlind, config.minRaise);
+      const validation = validateAllIn(seat, current.seats, current.currentBet, config.bigBlind, config.minRaise, decision.amount);
       if (!validation.ok) {
         const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
         const seats = setSeat(current.seats, folded);
@@ -679,15 +699,15 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
         economy: economyRef.current,
       });
       if (placed.ok) {
-        const allInSeat = applyActionLabel({ ...placed.seat, status: "allIn" }, "allIn");
+        const allInSeat = applyActionLabel(lockSeatAfterEffectiveAllIn(placed.seat), "allIn");
         const allInRaiseTo = seat.streetContribution + decision.amount;
-        const isRaise = current.currentBet === 0 || allInRaiseTo >= current.currentBet + config.minRaise;
+        const isRaise = isFullRaiseTo(current.currentBet, allInRaiseTo, config.bigBlind, config.minRaise);
         const nextSeats = isRaise
           ? resetOtherActivePlayersHasActed(setSeat(placed.seats, allInSeat), allInSeat.id)
           : setSeat(placed.seats, allInSeat);
         return prependAnimationEvents(
           advanceAfterAction(
-            { ...current, pot: placed.pot, currentBet: isRaise ? allInRaiseTo : current.currentBet },
+            { ...current, pot: placed.pot, currentBet: Math.max(current.currentBet, allInRaiseTo) },
             nextSeats,
             allInSeat.seatIndex,
           ),
@@ -697,6 +717,14 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     }
 
     if (decision.action === "bet") {
+      if (decision.amount > getEffectiveAllInAmount(seat, current.seats)) {
+        const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
+        const seats = setSeat(current.seats, folded);
+        return prependAnimationEvents(
+          advanceAfterAction(current, seats, folded.seatIndex),
+          emitActionEvents(folded, "fold", 0),
+        );
+      }
       const placed = placeToPot({
         seats: current.seats,
         pot: current.pot,
@@ -716,6 +744,14 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
 
     if (decision.action === "raise") {
       const contribution = decision.raiseTo - seat.streetContribution;
+      if (contribution <= 0 || contribution > getEffectiveAllInAmount(seat, current.seats)) {
+        const folded = applyActionLabel({ ...seat, status: "folded" }, "fold");
+        const seats = setSeat(current.seats, folded);
+        return prependAnimationEvents(
+          advanceAfterAction(current, seats, folded.seatIndex),
+          emitActionEvents(folded, "fold", 0),
+        );
+      }
       const placed = placeToPot({
         seats: current.seats,
         pot: current.pot,
@@ -734,20 +770,22 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     }
 
     if (decision.action === "call") {
+      const callAmount = Math.min(decision.amount, seat.tableStack);
       const placed = placeToPot({
         seats: current.seats,
         pot: current.pot,
         playerId: seat.id,
-        amount: decision.amount,
+        amount: callAmount,
         economy: economyRef.current,
       });
 
       if (placed.ok) {
-        const called = applyActionLabel(placed.seat, "call");
+        const action: HoldemActionKind = placed.seat.status === "allIn" ? "allIn" : "call";
+        const called = applyActionLabel(placed.seat, action);
         const seats = setSeat(placed.seats, called);
         return prependAnimationEvents(
           advanceAfterAction({ ...current, pot: placed.pot }, seats, called.seatIndex),
-          emitActionEvents(called, "call", decision.amount, placed.pot.amount),
+          emitActionEvents(called, action, callAmount, placed.pot.amount),
         );
       }
     }
@@ -840,7 +878,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     const current = stateRef.current;
     const guarded = guardPlayerAction(current);
     if ("ok" in guarded) return guarded;
-    const amount = Math.max(0, current.currentBet - guarded.streetContribution);
+    const amount = Math.min(Math.max(0, current.currentBet - guarded.streetContribution), guarded.tableStack);
     if (amount <= 0) return fail("INVALID_BET", "Call額がありません。");
     const placed = placeToPot({
       seats: current.seats,
@@ -850,12 +888,13 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       economy: economyRef.current,
     });
     if (!placed.ok) return placed;
-    const acted = applyActionLabel(placed.seat, "call");
+    const action: HoldemActionKind = placed.seat.status === "allIn" ? "allIn" : "call";
+    const acted = applyActionLabel(placed.seat, action);
     const seats = setSeat(placed.seats, acted);
     return commitPlayerSeats(
       { ...current, pot: placed.pot },
       seats,
-      emitActionEvents(acted, "call", amount, placed.pot.amount),
+      emitActionEvents(acted, action, amount, placed.pot.amount),
     );
   }, [commitPlayerSeats, emitActionEvents, guardPlayerAction]);
 
@@ -865,6 +904,9 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     if ("ok" in guarded) return guarded;
     if (current.currentBet !== 0 || !Number.isFinite(amount) || amount < config.bigBlind) {
       return fail("INVALID_BET", "Bet額が不正です。");
+    }
+    if (amount > getEffectiveAllInAmount(guarded, current.seats)) {
+      return fail("INVALID_BET", "Bet額が有効スタックを超えています。");
     }
     const placed = placeToPot({
       seats: current.seats,
@@ -887,7 +929,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     const current = stateRef.current;
     const guarded = guardPlayerAction(current);
     if ("ok" in guarded) return guarded;
-    const maxRaiseTo = guarded.streetContribution + Math.max(0, getHandContributionCap(current.seats) - guarded.totalContribution);
+    const maxRaiseTo = guarded.streetContribution + getEffectiveAllInAmount(guarded, current.seats);
     if (
       current.currentBet <= 0 ||
       !Number.isFinite(amount) ||
@@ -918,9 +960,9 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     const current = stateRef.current;
     const guarded = guardPlayerAction(current);
     if ("ok" in guarded) return guarded;
-    const validation = validateAllIn(guarded, current.seats, current.currentBet, config.bigBlind, config.minRaise);
+    const amount = getEffectiveAllInAmount(guarded, current.seats);
+    const validation = validateAllIn(guarded, current.seats, current.currentBet, config.bigBlind, config.minRaise, amount);
     if (!validation.ok) return validation;
-    const amount = guarded.tableStack;
     const allInRaiseTo = guarded.streetContribution + amount;
     const placed = placeToPot({
       seats: current.seats,
@@ -930,9 +972,9 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
       economy: economyRef.current,
     });
     if (!placed.ok) return placed;
-    const acted = applyActionLabel({ ...placed.seat, status: "allIn" }, "allIn");
-    const isRaise = current.currentBet === 0 || allInRaiseTo >= current.currentBet + config.minRaise;
-    const nextCurrentBet = isRaise ? allInRaiseTo : current.currentBet;
+    const acted = applyActionLabel(lockSeatAfterEffectiveAllIn(placed.seat), "allIn");
+    const isRaise = isFullRaiseTo(current.currentBet, allInRaiseTo, config.bigBlind, config.minRaise);
+    const nextCurrentBet = Math.max(current.currentBet, allInRaiseTo);
     const seats = isRaise
       ? resetOtherActivePlayersHasActed(setSeat(placed.seats, acted), acted.id)
       : setSeat(placed.seats, acted);
@@ -1081,6 +1123,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     amountToCall: metrics.amountToCall,
     handContributionCap: metrics.handContributionCap,
     maxRaiseTo: metrics.maxRaiseTo,
+    effectiveAllInAmount: metrics.effectiveAllInAmount,
     tableStack: playerSeat?.tableStack ?? 0,
     availableActions,
     animationEvents: state.animationEvents,

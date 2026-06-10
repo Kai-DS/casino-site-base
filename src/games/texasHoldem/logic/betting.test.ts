@@ -3,12 +3,13 @@ import type { GameEconomy, GameResultDraft } from "@/games/shared/economy";
 import type { HoldemSeat, Pot } from "../types";
 import {
   calculateAvailableActions,
+  getEffectiveAllInAmount,
   getHandContributionCap,
   placeToPot,
   resetOtherActivePlayersHasActed,
   validateAllIn,
 } from "./betting";
-import { buildFoldResult } from "./pot";
+import { buildFoldResult, buildShowdownResult, buildSidePots } from "./pot";
 import * as holdemEvaluator from "./holdemEvaluator";
 
 type TestEconomy = GameEconomy & {
@@ -95,7 +96,45 @@ describe("Texas Hold'em betting core", () => {
     expect(result.seat.hasActed).toBe(true);
   });
 
-  it("rejects cap-breaking contributions before moving chips", () => {
+  it("calculates effective all-in per actor and ignores folded stacks", () => {
+    const hero = seat({ id: "hero", isHuman: true, tableStack: 10_000 });
+    const a = seat({ id: "a", seatIndex: 1, tableStack: 4_000 });
+    const b = seat({ id: "b", seatIndex: 2, tableStack: 6_000 });
+    const c = seat({ id: "c", seatIndex: 3, tableStack: 9_000 });
+    const seats = [hero, a, b, c];
+
+    expect(getEffectiveAllInAmount(hero, seats)).toBe(9_000);
+    expect(getEffectiveAllInAmount(a, seats)).toBe(4_000);
+    expect(getEffectiveAllInAmount(b, seats)).toBe(6_000);
+    expect(getEffectiveAllInAmount(c, seats)).toBe(9_000);
+
+    const shortHero = seat({ id: "short-hero", isHuman: true, tableStack: 3_000 });
+    const deepVillain = seat({ id: "deep", seatIndex: 1, tableStack: 10_000 });
+    expect(getEffectiveAllInAmount(shortHero, [shortHero, deepVillain])).toBe(3_000);
+    expect(getEffectiveAllInAmount(deepVillain, [shortHero, deepVillain])).toBe(3_000);
+
+    const foldedDeep = seat({ id: "folded-deep", seatIndex: 2, tableStack: 12_000, status: "folded" });
+    const liveShort = seat({ id: "live-short", seatIndex: 3, tableStack: 7_000 });
+    expect(getEffectiveAllInAmount(hero, [hero, a, foldedDeep, liveShort])).toBe(7_000);
+
+    const contributedHero = seat({
+      id: "contributed-hero",
+      isHuman: true,
+      streetContribution: 500,
+      totalContribution: 500,
+      tableStack: 9_500,
+    });
+    const contributedOpponent = seat({
+      id: "contributed-opponent",
+      seatIndex: 1,
+      streetContribution: 1_000,
+      totalContribution: 1_000,
+      tableStack: 4_000,
+    });
+    expect(getEffectiveAllInAmount(contributedHero, [contributedHero, contributedOpponent])).toBe(4_500);
+  });
+
+  it("allows side-pot contributions through placeToPot", () => {
     const economy = makeEconomy(1_000);
     const seats = [
       seat({ id: "human", isHuman: true, tableStack: 100 }),
@@ -104,13 +143,17 @@ describe("Texas Hold'em betting core", () => {
 
     const result = placeToPot({ seats, pot: { amount: 0 }, playerId: "human", amount: 30, economy });
 
-    expect(result).toMatchObject({ ok: false, reason: "SIDE_POT_NOT_SUPPORTED" });
-    expect(economy.placeBet).not.toHaveBeenCalled();
-    expect(economy.chips).toBe(1_000);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.seat.tableStack).toBe(70);
+    expect(result.seat.streetContribution).toBe(30);
+    expect(result.seat.totalContribution).toBe(30);
+    expect(result.pot.amount).toBe(30);
+    expect(economy.chips).toBe(970);
   });
 
-  it("rejects All-in raises in the forbidden zone and below currentBet", () => {
-    const forbidden = seat({
+  it("allows short and min-raise-below all-in amounts", () => {
+    const belowMinRaise = seat({
       id: "human",
       isHuman: true,
       tableStack: 5,
@@ -125,18 +168,22 @@ describe("Texas Hold'em betting core", () => {
       totalContribution: 0,
     });
 
-    expect(validateAllIn(forbidden, [forbidden, seat({ id: "cpu", seatIndex: 1, tableStack: 100 })], 12, 10, 10))
-      .toMatchObject({ ok: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+    expect(validateAllIn(belowMinRaise, [belowMinRaise, seat({ id: "cpu", seatIndex: 1, tableStack: 100 })], 12, 10, 10))
+      .toEqual({ ok: true });
     expect(validateAllIn(belowCall, [belowCall, seat({ id: "cpu", seatIndex: 1, tableStack: 100 })], 10, 10, 10))
-      .toMatchObject({ ok: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+      .toEqual({ ok: true });
   });
 
-  it("rejects cap-breaking All-in as SIDE_POT_NOT_SUPPORTED", () => {
+  it("limits chip-leader all-in to the effective amount", () => {
     const deep = seat({ id: "human", isHuman: true, tableStack: 100 });
     const short = seat({ id: "short", seatIndex: 1, tableStack: 20 });
 
-    expect(validateAllIn(deep, [deep, short], 0, 10, 10))
-      .toMatchObject({ ok: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+    expect(getEffectiveAllInAmount(deep, [deep, short])).toBe(20);
+    expect(validateAllIn(deep, [deep, short], 0, 10, 10, 20)).toEqual({ ok: true });
+    expect(validateAllIn(deep, [deep, short], 0, 10, 10, 19))
+      .toMatchObject({ ok: false, reason: "INVALID_BET" });
+    expect(validateAllIn(deep, [deep, short], 0, 10, 10, 21))
+      .toMatchObject({ ok: false, reason: "INVALID_BET" });
   });
 
   it("keeps the preflop BB option: BB can check last when nobody raised", () => {
@@ -214,7 +261,7 @@ describe("Texas Hold'em betting core", () => {
     rankSpy.mockRestore();
   });
 
-  it("reports availableActions reasons for turn, stack, cap, and forbidden-zone states", () => {
+  it("reports availableActions reasons and effective all-in amounts", () => {
     const notTurn = calculateAvailableActions({
       seats: [seat({ id: "player", isHuman: true }), seat({ id: "cpu", seatIndex: 1 })],
       playerSeatIndex: 0,
@@ -253,7 +300,8 @@ describe("Texas Hold'em betting core", () => {
       bigBlind: 2,
       minRaise: 2,
     });
-    expect(shortCall.call).toEqual({ enabled: false, reason: "INSUFFICIENT_TABLE_STACK" });
+    expect(shortCall.call).toEqual({ enabled: true });
+    expect(shortCall.allIn).toEqual({ enabled: true, amount: 1 });
 
     const cappedBet = calculateAvailableActions({
       seats: [seat({ id: "player", isHuman: true, tableStack: 100 }), seat({ id: "short", seatIndex: 1, tableStack: 1 })],
@@ -263,8 +311,8 @@ describe("Texas Hold'em betting core", () => {
       bigBlind: 2,
       minRaise: 2,
     });
-    expect(cappedBet.bet).toEqual({ enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" });
-    expect(cappedBet.allIn).toEqual({ enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+    expect(cappedBet.bet).toEqual({ enabled: false, reason: "INVALID_BET" });
+    expect(cappedBet.allIn).toEqual({ enabled: true, amount: 1 });
 
     const cappedRaise = calculateAvailableActions({
       seats: [
@@ -277,9 +325,10 @@ describe("Texas Hold'em betting core", () => {
       bigBlind: 2,
       minRaise: 2,
     });
-    expect(cappedRaise.raise).toEqual({ enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+    expect(cappedRaise.raise).toEqual({ enabled: false, reason: "INVALID_BET" });
+    expect(cappedRaise.allIn).toEqual({ enabled: true, amount: 2 });
 
-    const forbiddenAllIn = calculateAvailableActions({
+    const belowMinRaiseAllIn = calculateAvailableActions({
       seats: [
         seat({ id: "player", isHuman: true, tableStack: 5, streetContribution: 10, totalContribution: 10 }),
         seat({ id: "cpu", seatIndex: 1, tableStack: 100 }),
@@ -290,6 +339,87 @@ describe("Texas Hold'em betting core", () => {
       bigBlind: 10,
       minRaise: 10,
     });
-    expect(forbiddenAllIn.allIn).toEqual({ enabled: false, reason: "SIDE_POT_NOT_SUPPORTED" });
+    expect(belowMinRaiseAllIn.allIn).toEqual({ enabled: true, amount: 5 });
+  });
+
+  it("builds side pots with correct eligible seats and settles each pot independently", () => {
+    const seats = [
+      seat({ id: "a", seatIndex: 0, totalContribution: 4_000, status: "allIn" }),
+      seat({ id: "b", seatIndex: 1, totalContribution: 6_000, status: "allIn" }),
+      seat({ id: "c", seatIndex: 2, totalContribution: 9_000, status: "allIn" }),
+      seat({ id: "hero", seatIndex: 3, isHuman: true, totalContribution: 9_000, status: "active", effectiveAllInLocked: true }),
+    ];
+
+    expect(buildSidePots(seats)).toEqual([
+      { amount: 16_000, cap: 4_000, eligibleSeatIds: ["a", "b", "c", "hero"] },
+      { amount: 6_000, cap: 6_000, eligibleSeatIds: ["b", "c", "hero"] },
+      { amount: 6_000, cap: 9_000, eligibleSeatIds: ["c", "hero"] },
+    ]);
+
+    const result = buildShowdownResult({
+      handId: 1,
+      seats,
+      winnerSeatIndexes: [0],
+      showdownHands: [
+        { seatId: "a", seatIndex: 0, bestHand: { cards: [], usedHoleCardCount: 2, rank: { category: "royal_flush", tiebreak: [14] } } },
+        { seatId: "b", seatIndex: 1, bestHand: { cards: [], usedHoleCardCount: 2, rank: { category: "one_pair", tiebreak: [14, 10, 9, 8] } } },
+        { seatId: "c", seatIndex: 2, bestHand: { cards: [], usedHoleCardCount: 2, rank: { category: "high_card", tiebreak: [14, 13, 10, 9, 8] } } },
+        { seatId: "hero", seatIndex: 3, bestHand: { cards: [], usedHoleCardCount: 2, rank: { category: "flush", tiebreak: [14, 12, 10, 8, 7] } } },
+      ],
+      pot: { amount: 28_000 },
+      dealerButtonIndex: 0,
+    });
+
+    expect(result.sidePots).toHaveLength(3);
+    expect(result.totalPotAmount).toBe(28_000);
+    expect(result.sidePots.reduce((sum, sidePot) => sum + sidePot.amount, 0)).toBe(result.totalPotAmount);
+    expect(result.settlements.find((settlement) => settlement.seatId === "a")?.wonAmount).toBe(16_000);
+    expect(result.settlements.find((settlement) => settlement.seatId === "hero")?.wonAmount).toBe(12_000);
+    expect(result.playerWonAmount).toBe(12_000);
+    expect(result.playerProfit).toBe(3_000);
+  });
+
+  it("counts folded contributions in side pots but excludes folded seats from eligibility", () => {
+    const seats = [
+      seat({ id: "folded-a", seatIndex: 0, totalContribution: 4_000, status: "folded" }),
+      seat({ id: "b", seatIndex: 1, totalContribution: 6_000, status: "allIn" }),
+      seat({ id: "c", seatIndex: 2, totalContribution: 9_000, status: "allIn" }),
+      seat({ id: "hero", seatIndex: 3, isHuman: true, totalContribution: 9_000, status: "active", effectiveAllInLocked: true }),
+    ];
+
+    expect(buildSidePots(seats)).toEqual([
+      { amount: 16_000, cap: 4_000, eligibleSeatIds: ["b", "c", "hero"] },
+      { amount: 6_000, cap: 6_000, eligibleSeatIds: ["b", "c", "hero"] },
+      { amount: 6_000, cap: 9_000, eligibleSeatIds: ["c", "hero"] },
+    ]);
+  });
+
+  it("keeps split-pot remainder ordering when folded contributions make an odd side pot", () => {
+    const seats = [
+      seat({ id: "a", seatIndex: 0, totalContribution: 1, status: "active" }),
+      seat({ id: "b", seatIndex: 1, totalContribution: 1, status: "active" }),
+      seat({ id: "folded-c", seatIndex: 2, totalContribution: 1, status: "folded" }),
+      seat({ id: "folded-d", seatIndex: 3, totalContribution: 1, status: "folded" }),
+      seat({ id: "folded-e", seatIndex: 4, totalContribution: 1, status: "folded" }),
+    ];
+
+    const result = buildShowdownResult({
+      handId: 2,
+      seats,
+      winnerSeatIndexes: [0, 1],
+      showdownHands: [
+        { seatId: "a", seatIndex: 0, bestHand: { cards: [], usedHoleCardCount: 2, rank: { category: "straight", tiebreak: [14] } } },
+        { seatId: "b", seatIndex: 1, bestHand: { cards: [], usedHoleCardCount: 2, rank: { category: "straight", tiebreak: [14] } } },
+      ],
+      pot: { amount: 5 },
+      dealerButtonIndex: 4,
+    });
+
+    expect(result.sidePots).toEqual([
+      { amount: 5, cap: 1, eligibleSeatIds: ["a", "b"] },
+    ]);
+    expect(result.settlements.find((settlement) => settlement.seatId === "a")?.wonAmount).toBe(3);
+    expect(result.settlements.find((settlement) => settlement.seatId === "b")?.wonAmount).toBe(2);
+    expect(result.settlements.find((settlement) => settlement.seatId === "folded-c")?.wonAmount).toBe(0);
   });
 });
