@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { shuffledDeck, validatePokerDeck } from "@/games/shared/poker/deck";
 import { buildHoldemGameResult, toHoldemRateConfig } from "./adapter";
 import {
+  amountToCallForSeat,
   applyActionLabel,
   calculateActionMetrics,
   calculateAvailableActions,
@@ -770,7 +771,15 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     }
 
     if (decision.action === "call") {
-      const callAmount = Math.min(decision.amount, seat.tableStack);
+      const callAmount = Math.min(amountToCallForSeat(seat, current.currentBet), seat.tableStack);
+      if (callAmount <= 0) {
+        const checked = applyActionLabel(seat, "check");
+        const seats = setSeat(current.seats, checked);
+        return prependAnimationEvents(
+          advanceAfterAction(current, seats, checked.seatIndex),
+          emitActionEvents(checked, "check", 0),
+        );
+      }
       const placed = placeToPot({
         seats: current.seats,
         pot: current.pot,
@@ -932,6 +941,7 @@ export function useTexasHoldem(options: UseTexasHoldemOptions): UseTexasHoldemRe
     const maxRaiseTo = guarded.streetContribution + getEffectiveAllInAmount(guarded, current.seats);
     if (
       current.currentBet <= 0 ||
+      guarded.hasActed ||
       !Number.isFinite(amount) ||
       amount < current.currentBet + config.minRaise ||
       amount > maxRaiseTo

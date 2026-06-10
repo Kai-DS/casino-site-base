@@ -295,7 +295,7 @@ export function calculateAvailableActions(context: ActionContext): AvailableActi
       : "INVALID_BET";
   const raiseReason = context.currentBet === 0
     ? "INVALID_PHASE"
-    : context.currentBet + context.minRaise > maxRaiseTo
+    : seat.hasActed || context.currentBet + context.minRaise > maxRaiseTo
       ? "INVALID_BET"
       : "INVALID_BET";
 
@@ -308,7 +308,7 @@ export function calculateAvailableActions(context: ActionContext): AvailableActi
     bet: context.currentBet === 0 && seat.tableStack >= context.bigBlind && context.bigBlind <= effectiveAllInAmount
       ? enabled()
       : disabled(betReason),
-    raise: context.currentBet > 0 && context.currentBet + context.minRaise <= maxRaiseTo
+    raise: context.currentBet > 0 && !seat.hasActed && context.currentBet + context.minRaise <= maxRaiseTo
       ? enabled()
       : disabled(raiseReason),
     allIn: allInResult.ok
