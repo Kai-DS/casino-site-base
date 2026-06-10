@@ -14,7 +14,7 @@ export const GAMES: readonly GameInfo[] = [
   {
     id: "holdem",
     title: "Texas Hold'em",
-    description: "1 player vs 3 CPU. Coming soon.",
+    description: "1 player vs 4 CPU. Pseudo-3D cash table.",
     status: "comingSoon",
     cardRank: "K",
     cardSuit: "heart",

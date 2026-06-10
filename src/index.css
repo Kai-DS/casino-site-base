@@ -135,6 +135,302 @@
   }
 }
 
+/* ── Texas Hold'em UI / pseudo-3D (spec §22–24) ──────────────────────────── */
+@layer base {
+  :root {
+    /* §22.1 colour tokens */
+    --felt-center: #0e7a52;
+    --felt-edge: #0a4f37;
+    --felt-line: #0c5c3f;
+    --rail: #b8860b;
+    --rail-hi: #e9c46a;
+    --bg-deep: #07120d;
+    --bg-navy: #0b1622;
+    --gold: #e9c46a;
+    --gold-2: #f4d680;
+    --red: #c1121f;
+    --neon: #2bd9c4;
+    --neon-2: #7a5cff;
+    --text-hi: #f5f1e6;
+    --text-mid: #c9c2b0;
+    --text-dim: #6f6a5c;
+  }
+}
+
+@keyframes holdemAmbient {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+
+@keyframes holdemTurnGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(233, 196, 106, 0.55), 0 0 14px 2px rgba(233, 196, 106, 0.35);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(233, 196, 106, 0.9), 0 0 26px 6px rgba(233, 196, 106, 0.55);
+    transform: scale(1.02);
+  }
+}
+
+@keyframes holdemDealIn {
+  from {
+    opacity: 0;
+    transform: translate(var(--deal-from-x, -120px), var(--deal-from-y, -180px)) rotate(-15deg) scale(0.86);
+  }
+  60% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0) rotate(var(--card-rot, 0deg)) scale(1);
+  }
+}
+
+/* Community card dealt in from the deck origin (left→right), before it flips. */
+@keyframes holdemCardDeal {
+  from {
+    opacity: 0;
+    transform: translate(var(--deal-x, 0), var(--deal-y, -180px)) rotate(var(--deal-rot, -8deg)) scale(0.92);
+  }
+  55% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+}
+
+@keyframes holdemRevealIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes holdemChipToPot {
+  from {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.8);
+  }
+  18% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--fly-x, 0), var(--fly-y, -150px)) scale(0.7);
+  }
+}
+
+@keyframes holdemChipToSeat {
+  from {
+    opacity: 0;
+    transform: translate(calc(var(--fly-x, 0) * -1), calc(var(--fly-y, 150px) * -1)) scale(0.7);
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.95);
+  }
+}
+
+@keyframes holdemPotPulse {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.14);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes holdemLabelPop {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.8);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(0) scale(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes holdemBannerIn {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.86);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(0) scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes holdemWinShimmer {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(233, 196, 106, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 18px 5px rgba(233, 196, 106, 0.95);
+  }
+}
+
+@keyframes holdemSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@layer components {
+  /* §23.2 pseudo-3D stage; interactive layers stay flat for hit-testing */
+  .holdem-stage {
+    perspective: 1500px;
+  }
+  .holdem-tilt {
+    transform: rotateX(6deg);
+    transform-style: preserve-3d;
+  }
+  /* Stadium (capsule) brass rail — straight top/bottom, semicircular ends. */
+  .holdem-rail {
+    border-radius: 9999px;
+    background: linear-gradient(180deg, var(--rail-hi) 0%, #d9b24c 40%, var(--rail) 68%, #7a5a11 100%);
+    box-shadow:
+      0 30px 64px rgba(0, 0, 0, 0.7),
+      inset 0 2px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -4px 10px rgba(0, 0, 0, 0.55);
+  }
+  /* §23.1 green felt — stadium, radial felt + inner soft shadow + vignette */
+  .holdem-felt {
+    border-radius: 9999px;
+    background:
+      radial-gradient(120% 92% at 50% 38%, var(--felt-center) 0%, var(--felt-edge) 66%, #06311e 100%);
+    box-shadow:
+      inset 0 0 100px rgba(0, 0, 0, 0.6),
+      inset 0 0 0 2px rgba(0, 0, 0, 0.4),
+      inset 0 8px 26px rgba(0, 0, 0, 0.5);
+  }
+  .holdem-felt::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background:
+      radial-gradient(120% 92% at 50% 42%, transparent 52%, rgba(0, 0, 0, 0.45) 100%),
+      repeating-conic-gradient(rgba(255, 255, 255, 0.014) 0deg 2deg, transparent 2deg 4deg);
+  }
+  /* §23.3 ambient centre spotlight that breathes very slowly (~6s) */
+  .holdem-felt::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: radial-gradient(60% 50% at 50% 40%, rgba(255, 246, 214, 0.12), transparent 60%);
+    animation: holdemAmbient 6s ease-in-out infinite;
+  }
+  .holdem-bet-line {
+    border: 2px solid var(--felt-line);
+    border-radius: 9999px;
+    box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.25);
+  }
+  .holdem-backdrop {
+    background:
+      radial-gradient(120% 75% at 50% 32%, rgba(20, 46, 36, 0.6), transparent 58%),
+      radial-gradient(70% 50% at 50% 26%, rgba(233, 196, 106, 0.07), transparent 55%),
+      linear-gradient(180deg, #0a1410 0%, #05080b 100%);
+  }
+
+  .holdem-turn-glow {
+    animation: holdemTurnGlow 1.4s ease-in-out infinite;
+  }
+  .holdem-deal-in {
+    animation: holdemDealIn 0.28s var(--ease-card, cubic-bezier(0.34, 1.56, 0.64, 1)) both;
+  }
+  .holdem-card-deal {
+    animation: holdemCardDeal var(--deal-dur, 0.32s) cubic-bezier(0.34, 1.4, 0.64, 1) both;
+    animation-delay: var(--deal-delay, 0s);
+  }
+  .holdem-reveal-in {
+    animation: holdemRevealIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .holdem-chip-fly {
+    animation: holdemChipToPot var(--fly-dur, 0.35s) cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
+  .holdem-chip-award {
+    animation: holdemChipToSeat var(--fly-dur, 0.6s) cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
+  .holdem-progress-ring {
+    background: conic-gradient(var(--neon) var(--ring, 0deg), rgba(255, 255, 255, 0.12) 0deg);
+  }
+  .holdem-pot-pulse {
+    animation: holdemPotPulse 0.4s ease-out;
+  }
+  .holdem-label-pop {
+    animation: holdemLabelPop 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .holdem-banner-in {
+    animation: holdemBannerIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .holdem-win-shimmer {
+    animation: holdemWinShimmer 1.2s ease-in-out infinite;
+    border-radius: 0.5rem;
+  }
+  .holdem-spin {
+    animation: holdemSpin 0.8s linear infinite;
+  }
+
+  /* §24.2/24.3/24.7: flip used for hero deal, community reveal, showdown CPU reveals */
+  .holdem-flip {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    transition: transform 0.36s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: rotateY(180deg);
+  }
+  .holdem-flip.is-face-up {
+    transform: rotateY(0deg);
+  }
+  .holdem-flip-face {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .holdem-flip-front {
+    transform: rotateY(0deg);
+  }
+  .holdem-flip-back {
+    transform: rotateY(180deg);
+  }
+}
+
 @layer components {
   .vp-card-in {
     animation: vpCardIn 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;

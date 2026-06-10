@@ -4,10 +4,12 @@ import { LoginPage } from "@/pages/LoginPage";
 import { LobbyPage } from "@/pages/LobbyPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { VideoPokerPage } from "@/pages/games/VideoPokerPage";
+import { TexasHoldemPage } from "@/pages/games/TexasHoldemPage";
 import { ComingSoonPage } from "@/pages/games/ComingSoonPage";
 import { AppShell } from "@/components/layout/AppShell";
 import { RouteErrorBoundary } from "@/components/layout/RouteErrorBoundary";
 import { VideoPokerSandbox } from "@/sandbox/videoPoker/VideoPokerSandbox";
+import { TexasHoldemSandbox } from "@/sandbox/texasHoldem/TexasHoldemSandbox";
 
 // URLs are kebab-case; GameIds are camelCase — the mapping lives in constants/games.ts (spec §6).
 export const router = createBrowserRouter([
@@ -15,6 +17,7 @@ export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   // Isolated dev harness — no auth/lobby, mock economy. Same game logic as production.
   { path: "/sandbox/video-poker", element: <VideoPokerSandbox /> },
+  { path: "/sandbox/texas-holdem", element: <TexasHoldemSandbox /> },
   {
     element: <AppShell />, // shared header/layout + guest-login guard
     errorElement: <RouteErrorBoundary />,
@@ -23,7 +26,7 @@ export const router = createBrowserRouter([
       { path: "/profile", element: <ProfilePage /> },
       { path: "/games/neonjack", element: <ComingSoonPage id="neonjack" /> },
       { path: "/games/video-poker", element: <VideoPokerPage /> },
-      { path: "/games/holdem", element: <ComingSoonPage id="holdem" /> },
+      { path: "/games/holdem", element: <TexasHoldemPage /> },
       { path: "/games/omaha", element: <ComingSoonPage id="omaha" /> },
     ],
   },
