@@ -45,6 +45,7 @@ export interface ActionMetrics {
   amountToCall: number;
   handContributionCap: number;
   maxRaiseTo: number;
+  effectiveAllInAmount: number;
 }
 
 const OK: ActionResult = { ok: true };
@@ -62,7 +63,7 @@ export function isContender(seat: HoldemSeat): boolean {
 }
 
 export function isActionable(seat: HoldemSeat): boolean {
-  return seat.status === "active" && seat.tableStack > 0;
+  return seat.status === "active" && seat.tableStack > 0 && !seat.effectiveAllInLocked;
 }
 
 export function getHandContributionCap(seats: readonly HoldemSeat[]): number {
@@ -83,11 +84,33 @@ export function amountToCallForSeat(seat: HoldemSeat, currentBet: number): numbe
 }
 
 export function maxAdditionalForSeat(seat: HoldemSeat, seats: readonly HoldemSeat[]): number {
-  return Math.max(0, getHandContributionCap(seats) - seat.totalContribution);
+  return getEffectiveAllInAmount(seat, seats);
 }
 
 export function maxRaiseToForSeat(seat: HoldemSeat, seats: readonly HoldemSeat[]): number {
   return seat.streetContribution + maxAdditionalForSeat(seat, seats);
+}
+
+export function getEffectiveAllInAmount(actor: HoldemSeat, seats: readonly HoldemSeat[]): number {
+  if (actor.status === "folded" || actor.status === "sittingOut" || actor.status === "busted") return 0;
+  if (actor.tableStack <= 0) return 0;
+
+  const opponents = seats.filter((seat) =>
+    seat.id !== actor.id &&
+    seat.status !== "folded" &&
+    seat.status !== "sittingOut" &&
+    seat.status !== "busted"
+  );
+  if (opponents.length === 0) return 0;
+
+  const actorTotalAvailable = actor.totalContribution + actor.tableStack;
+  const maxOpponentTotalAvailable = Math.max(
+    ...opponents.map((seat) => seat.totalContribution + seat.tableStack),
+  );
+  const targetTotalContribution = Math.min(actorTotalAvailable, maxOpponentTotalAvailable);
+  const additionalAmount = targetTotalContribution - actor.totalContribution;
+
+  return Math.max(0, Math.min(actor.tableStack, additionalAmount));
 }
 
 export function setSeat(seats: readonly HoldemSeat[], updatedSeat: HoldemSeat): HoldemSeat[] {
@@ -123,19 +146,11 @@ export function placeToPot(params: PlaceToPotParams): PlaceToPotResult {
     return { ok: false, reason: "NOT_SEATED", message: "席情報がありません。" };
   }
 
-  const cap = getHandContributionCap(seats);
   if (player.tableStack < amount) {
     return { ok: false, reason: "INSUFFICIENT_TABLE_STACK", message: "テーブル上のチップが不足しています。" };
   }
   if (player.isHuman && economy.chips < amount) {
     return { ok: false, reason: "INSUFFICIENT_CHIPS", message: "所持チップが不足しています。" };
-  }
-  if (player.totalContribution + amount > cap) {
-    return {
-      ok: false,
-      reason: "SIDE_POT_NOT_SUPPORTED",
-      message: "v1ではサイドポットが発生するベットはできません。",
-    };
   }
   if (player.isHuman && !economy.placeBet(amount)) {
     return { ok: false, reason: "ECONOMY_FAILED", message: "チップ処理に失敗しました。" };
@@ -152,7 +167,7 @@ export function placeToPot(params: PlaceToPotParams): PlaceToPotResult {
   return {
     ok: true,
     seats: nextSeats,
-    pot: { amount: pot.amount + amount },
+    pot: { amount: pot.amount + amount, sidePots: pot.sidePots },
     seat: contributed,
     amount,
   };
@@ -182,9 +197,9 @@ export function nextActionSeatIndex(seats: readonly HoldemSeat[], fromSeatIndex:
 
 export function isBettingRoundComplete(seats: readonly HoldemSeat[], currentBet: number): boolean {
   const contenders = seats.filter(isContender);
-  const activeNeedAction = contenders.filter((seat) => seat.status === "active" && !seat.hasActed);
+  const activeNeedAction = contenders.filter((seat) => isActionable(seat) && !seat.hasActed);
   const allMatchedOrAllIn = contenders.every(
-    (seat) => seat.status === "allIn" || seat.streetContribution === currentBet,
+    (seat) => seat.status === "allIn" || seat.effectiveAllInLocked || seat.streetContribution === currentBet,
   );
   return activeNeedAction.length === 0 && allMatchedOrAllIn;
 }
@@ -194,13 +209,15 @@ export function calculateActionMetrics(context: ActionContext): ActionMetrics {
     ? null
     : context.seats.find((candidate) => candidate.seatIndex === context.playerSeatIndex) ?? null;
   if (!seat) {
-    return { amountToCall: 0, handContributionCap: 0, maxRaiseTo: 0 };
+    return { amountToCall: 0, handContributionCap: 0, maxRaiseTo: 0, effectiveAllInAmount: 0 };
   }
 
+  const effectiveAllInAmount = getEffectiveAllInAmount(seat, context.seats);
   return {
     amountToCall: amountToCallForSeat(seat, context.currentBet),
     handContributionCap: getHandContributionCap(context.seats),
-    maxRaiseTo: maxRaiseToForSeat(seat, context.seats),
+    maxRaiseTo: seat.streetContribution + effectiveAllInAmount,
+    effectiveAllInAmount,
   };
 }
 
@@ -216,26 +233,19 @@ export function validateAllIn(
   seat: HoldemSeat,
   seats: readonly HoldemSeat[],
   currentBet: number,
-  bigBlind: number,
-  minRaise: number,
+  _bigBlind: number,
+  _minRaise: number,
+  amount = getEffectiveAllInAmount(seat, seats),
 ): ActionResult {
-  const allInAmount = seat.tableStack;
+  const allInAmount = amount;
+  const effectiveAllInAmount = getEffectiveAllInAmount(seat, seats);
   if (allInAmount <= 0) return fail("INVALID_BET", "All-in額が不正です。");
-  if (seat.totalContribution + allInAmount > getHandContributionCap(seats)) {
-    return fail("SIDE_POT_NOT_SUPPORTED", "v1ではサイドポットが発生するAll-inはできません。");
+  if (allInAmount !== effectiveAllInAmount) {
+    return fail("INVALID_BET", "All-in額が有効All-in額と一致していません。");
   }
 
-  if (currentBet === 0) {
-    if (allInAmount < bigBlind) {
-      return fail("SIDE_POT_NOT_SUPPORTED", "v1ではBig Blind未満のAll-in Betはできません。");
-    }
-    return OK;
-  }
-
-  const allInRaiseTo = seat.streetContribution + allInAmount;
-  if (allInRaiseTo === currentBet || allInRaiseTo >= currentBet + minRaise) return OK;
-
-  return fail("SIDE_POT_NOT_SUPPORTED", "v1では中途半端な額のAll-inはできません。");
+  void currentBet;
+  return OK;
 }
 
 export function calculateAvailableActions(context: ActionContext): AvailableActions {
@@ -262,43 +272,55 @@ export function calculateAvailableActions(context: ActionContext): AvailableActi
   }
 
   const amountToCall = amountToCallForSeat(seat, context.currentBet);
-  const cap = getHandContributionCap(context.seats);
+  const effectiveAllInAmount = getEffectiveAllInAmount(seat, context.seats);
   const maxRaiseTo = maxRaiseToForSeat(seat, context.seats);
-  const allInResult = validateAllIn(seat, context.seats, context.currentBet, context.bigBlind, context.minRaise);
+  const allInRaiseTo = seat.streetContribution + effectiveAllInAmount;
+  const allInWouldReopenRaise = seat.hasActed && allInRaiseTo > context.currentBet;
+  const allInResult = validateAllIn(
+    seat,
+    context.seats,
+    context.currentBet,
+    context.bigBlind,
+    context.minRaise,
+    effectiveAllInAmount,
+  );
 
   const callReason = amountToCall <= 0
     ? "INVALID_PHASE"
-    : seat.tableStack < amountToCall
+    : seat.tableStack <= 0
       ? "INSUFFICIENT_TABLE_STACK"
-      : seat.totalContribution + amountToCall > cap
-        ? "SIDE_POT_NOT_SUPPORTED"
-        : "INSUFFICIENT_TABLE_STACK";
+      : "INSUFFICIENT_TABLE_STACK";
   const betReason = context.currentBet !== 0
     ? "INVALID_PHASE"
     : seat.tableStack < context.bigBlind
       ? "INSUFFICIENT_TABLE_STACK"
-      : seat.totalContribution + context.bigBlind > cap
-        ? "SIDE_POT_NOT_SUPPORTED"
-        : "INSUFFICIENT_TABLE_STACK";
+      : "INVALID_BET";
   const raiseReason = context.currentBet === 0
     ? "INVALID_PHASE"
-    : context.currentBet + context.minRaise > maxRaiseTo
-      ? "SIDE_POT_NOT_SUPPORTED"
+    : seat.hasActed || context.currentBet + context.minRaise > maxRaiseTo
+      ? "INVALID_BET"
       : "INVALID_BET";
+  const allInReason = allInWouldReopenRaise
+    ? "INVALID_BET"
+    : allInResult.ok
+      ? "INVALID_BET"
+      : allInResult.reason;
 
   return {
     fold: enabled(),
     check: amountToCall === 0 ? enabled() : disabled("INVALID_PHASE"),
-    call: amountToCall > 0 && seat.tableStack >= amountToCall && seat.totalContribution + amountToCall <= cap
+    call: amountToCall > 0 && seat.tableStack > 0
       ? enabled()
       : disabled(callReason),
-    bet: context.currentBet === 0 && seat.tableStack >= context.bigBlind && seat.totalContribution + context.bigBlind <= cap
+    bet: context.currentBet === 0 && seat.tableStack >= context.bigBlind && context.bigBlind <= effectiveAllInAmount
       ? enabled()
       : disabled(betReason),
-    raise: context.currentBet > 0 && context.currentBet + context.minRaise <= maxRaiseTo
+    raise: context.currentBet > 0 && !seat.hasActed && context.currentBet + context.minRaise <= maxRaiseTo
       ? enabled()
       : disabled(raiseReason),
-    allIn: allInResult.ok ? enabled() : disabled(allInResult.reason),
+    allIn: allInResult.ok && !allInWouldReopenRaise
+      ? { enabled: true, amount: effectiveAllInAmount }
+      : { enabled: false, reason: allInReason, amount: effectiveAllInAmount },
   };
 }
 

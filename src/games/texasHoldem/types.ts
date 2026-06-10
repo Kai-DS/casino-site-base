@@ -41,10 +41,18 @@ export interface HoldemSeat {
   totalContribution: number;
   hasActed: boolean;
   lastAction?: HoldemActionKind;
+  effectiveAllInLocked?: boolean;
+}
+
+export interface SidePot {
+  amount: number;
+  eligibleSeatIds: string[];
+  cap: number;
 }
 
 export interface Pot {
   amount: number;
+  sidePots?: SidePot[];
 }
 
 export interface BestHoldemHand {
@@ -69,6 +77,7 @@ export type ActionResult =
 export interface ActionAvailability {
   enabled: boolean;
   reason?: HoldemActionError;
+  amount?: number;
 }
 
 export interface AvailableActions {
@@ -121,6 +130,7 @@ export interface HoldemResult {
   settlements: HoldemSettlement[];
   showdownHands: HoldemShowdownHand[];
   totalPotAmount: number;
+  sidePots: SidePot[];
   playerWonAmount: number;
   playerProfit: number;
   winningCategory: HandCategory | "fold";
@@ -158,6 +168,7 @@ export interface UseTexasHoldemReturn {
   amountToCall: number;
   handContributionCap: number;
   maxRaiseTo: number;
+  effectiveAllInAmount: number;
   tableStack: number;
 
   availableActions: AvailableActions;

@@ -1,7 +1,7 @@
 import type { AvailableActions, CpuStyle, HoldemPhase, HoldemSeat, PreflopStrength } from "../types";
 import {
   amountToCallForSeat,
-  getHandContributionCap,
+  getEffectiveAllInAmount,
   maxRaiseToForSeat,
   validateAllIn,
 } from "./betting";
@@ -33,13 +33,13 @@ function isLoose(style: CpuStyle | undefined): boolean {
 }
 
 function chooseBetAmount(input: CpuDecisionInput): CpuDecision {
-  const cap = getHandContributionCap(input.seats);
-  const maxAdditional = Math.max(0, cap - input.seat.totalContribution);
+  const maxAdditional = getEffectiveAllInAmount(input.seat, input.seats);
   const preferred = isAggressive(input.seat.style) ? input.bigBlind * 2 : input.bigBlind;
   const amount = Math.min(preferred, maxAdditional, input.seat.tableStack);
+  const allInAmount = input.availableActions.allIn.amount ?? maxAdditional;
 
-  if (amount === input.seat.tableStack && input.availableActions.allIn.enabled) {
-    return { action: "allIn", amount };
+  if (amount === allInAmount && input.availableActions.allIn.enabled) {
+    return { action: "allIn", amount: allInAmount };
   }
   if (input.availableActions.bet.enabled && amount >= input.bigBlind && amount < input.seat.tableStack) {
     return { action: "bet", amount };
@@ -51,15 +51,16 @@ function chooseRaiseTo(input: CpuDecisionInput): CpuDecision {
   const maxRaiseTo = maxRaiseToForSeat(input.seat, input.seats);
   const raiseTo = Math.min(input.currentBet + input.minRaise, maxRaiseTo);
   const amount = raiseTo - input.seat.streetContribution;
+  const allInAmount = input.availableActions.allIn.amount ?? getEffectiveAllInAmount(input.seat, input.seats);
 
-  if (amount === input.seat.tableStack && input.availableActions.allIn.enabled) {
-    return { action: "allIn", amount };
+  if (amount === allInAmount && input.availableActions.allIn.enabled) {
+    return { action: "allIn", amount: allInAmount };
   }
   if (input.availableActions.raise.enabled && raiseTo >= input.currentBet + input.minRaise && amount < input.seat.tableStack) {
     return { action: "raise", raiseTo };
   }
   return input.availableActions.call.enabled
-    ? { action: "call", amount: amountToCallForSeat(input.seat, input.currentBet) }
+    ? { action: "call", amount: Math.min(amountToCallForSeat(input.seat, input.currentBet), input.seat.tableStack) }
     : { action: "fold" };
 }
 
@@ -115,12 +116,13 @@ export function chooseCpuAction(input: CpuDecisionInput): CpuDecision {
   }
 
   if (input.availableActions.call.enabled && (strength !== "weak" || isLoose(input.seat.style))) {
-    return { action: "call", amount: amountToCall };
+    return { action: "call", amount: Math.min(amountToCall, input.seat.tableStack) };
   }
 
-  const allInResult = validateAllIn(input.seat, input.seats, input.currentBet, input.bigBlind, input.minRaise);
+  const allInAmount = input.availableActions.allIn.amount ?? getEffectiveAllInAmount(input.seat, input.seats);
+  const allInResult = validateAllIn(input.seat, input.seats, input.currentBet, input.bigBlind, input.minRaise, allInAmount);
   if (input.availableActions.allIn.enabled && allInResult.ok && strength === "premium") {
-    return { action: "allIn", amount: input.seat.tableStack };
+    return { action: "allIn", amount: allInAmount };
   }
 
   return { action: "fold" };
