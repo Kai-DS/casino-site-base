@@ -21,13 +21,13 @@ export const GAMES: readonly GameInfo[] = [
     path: "/games/holdem",
   },
   {
-    id: "omaha",
-    title: "Omaha Poker",
-    description: "4 hole cards, use exactly 2. Coming soon.",
+    id: "roulette",
+    title: "Roulette",
+    description: "Place chips, spin the wheel, and resolve in one shot. Coming soon.",
     status: "comingSoon",
     cardRank: "Q",
     cardSuit: "diamond",
-    path: "/games/omaha",
+    path: "/games/roulette",
   },
   {
     id: "videoPoker",
