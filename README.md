@@ -14,7 +14,7 @@ guest and play with free chips. Built per [`casino-hub-spec-v1.0.md`](./casino-h
 | A♠ | **NEON JACK** — Juggler-style pachislot (fixed 3-medal bet) | ✅ Playable |
 | J♣ | **Video Poker** — Jacks or Better (9/6) | ✅ Playable |
 | K♥ | Texas Hold'em | 🔜 Coming Soon |
-| Q♦ | Omaha Poker | 🔜 Coming Soon |
+| Q♦ | Roulette | 🔜 Coming Soon |
 
 ## Getting started
 

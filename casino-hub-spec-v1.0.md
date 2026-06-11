@@ -27,7 +27,7 @@
 複数のカジノ風ゲームを1つのロビーから遊べるブラウザ向け総合ゲームアプリ。
 
 - 最初の実装では既存スロット **NEON JACK** をメインゲームとして統合する。
-- 将来的に Video Poker → Texas Hold'em → Omaha Poker を追加できる構成にする。
+- 将来的に Video Poker → Texas Hold'em → Roulette を追加できる構成にする。
 - **現金・換金要素は一切なし。アプリ内の無料チップのみを使うシミュレーションゲーム**として運用する。
 
 ---
@@ -248,7 +248,7 @@ export function buildNeonJackResult(spin: NeonJackSpinOutput, rate: Rate): GameR
 /profile     プロフィール
 /games/neonjack
 /games/holdem
-/games/omaha
+/games/roulette
 /games/video-poker
 ```
 
@@ -268,7 +268,7 @@ export const router = createBrowserRouter([
       { path: "/profile", element: <ProfilePage /> },
       { path: "/games/neonjack", element: <NeonJackPage /> },
       { path: "/games/holdem", element: <ComingSoonOrPage id="holdem" /> },
-      { path: "/games/omaha", element: <ComingSoonOrPage id="omaha" /> },
+      { path: "/games/roulette", element: <ComingSoonOrPage id="roulette" /> },
       { path: "/games/video-poker", element: <ComingSoonOrPage id="videoPoker" /> },
     ],
   },
@@ -297,7 +297,7 @@ export const router = createBrowserRouter([
 |--------|--------|
 | A♠ | NEON JACK |
 | K♥ | Texas Hold'em |
-| Q♦ | Omaha Poker |
+| Q♦ | Roulette |
 | J♣ | Video Poker |
 | Joker | Coming Soon |
 
@@ -307,7 +307,7 @@ export const router = createBrowserRouter([
 ├──────────────────────────────┤
 │        緑のポーカーテーブル        │
 │   [A♠ NEON JACK] [K♥ HOLD'EM] │
-│   [Q♦ OMAHA]     [J♣ VIDEO]   │
+│   [Q♦ ROULETTE]  [J♣ VIDEO]   │
 │          [JOKER SOON]         │
 ├──────────────────────────────┤
 │ Daily Bonus / Profile / Rank  │
@@ -396,18 +396,12 @@ export const RATES: Rate[] = [
 - 将来拡張：オンライン対戦／トーナメント／チャット／CPU思考レベル／オールイン演出。
 - **CPU AI はMVPでは単純ルールベース**（弱い→Fold、普通→Call、強い→Raise）でよい。思考レベルは後フェーズ。
 
-### 9.4 Omaha
-- プレイヤー1人＋CPU3人、手札4枚＋共通5枚、**手札からちょうど2枚＋共通からちょうど3枚**を使用。
-- **役判定の共有方針（重要）**：Hold'emの役判定を“そのまま”流用はしない、が、**5枚ハンドのランク付け（ストレート/フラッシュ等）は共通化**する。違うのは**組合せ生成だけ**。
-
-```ts
-// 共通: 5枚を評価
-rankFiveCardHand(cards: Card[5]): HandRank
-
-// Hold'em: 7枚から最良5枚 → C(7,5)=21通り
-// Omaha:   手札4から2(C=6) × 共通5から3(C=10) = 60通り を rankFiveCardHand で評価し最良を採用
-bestHand(hole: Card[], community: Card[], game: "holdem" | "omaha"): { rank: HandRank; cards: Card[5] }
-```
+### 9.4 Roulette
+- 1人用。ベット配置 → スピン → 着地番号/色の確定 → 配当一括精算。
+- MVPでは未実装カードとして `Coming Soon` 表示。実装時はターン制ではなく、短いフェーズ遷移で扱う。
+- フェーズ案：`idle` → `betting` → `spinning` → `result`。
+- ベット種別案：straight / split / street / corner / sixLine / column / dozen / redBlack / oddEven / highLow。
+- `betUnit` はチップ単位、`minBalance` は入場ゲートとして使う。結果は `GameResult.gameId = "roulette"` で保存する。
 
 > ポーカーの `Suit/Rank/Card`（§10）と、ロビーのトランプ装飾カード（`GameInfo.cardSuit` に `"joker"` を含む）は**別物**。前者はゲームロジック用、後者はロビー表示用の装飾型。混在させない。
 
@@ -438,7 +432,7 @@ export type DailyBonus = {
 
 ```ts
 // types/game.ts
-export type GameId = "neonjack" | "holdem" | "omaha" | "videoPoker";
+export type GameId = "neonjack" | "holdem" | "roulette" | "videoPoker";
 
 export type GameInfo = {
   id: GameId;
@@ -516,7 +510,7 @@ src/
 │   └── games/
 │       ├── NeonJackPage.tsx
 │       ├── HoldemPage.tsx
-│       ├── OmahaPage.tsx
+│       ├── RoulettePage.tsx
 │       └── VideoPokerPage.tsx
 ├── components/
 │   ├── common/   # Button, Modal, ChipDisplay, GameCard
@@ -525,7 +519,7 @@ src/
 ├── games/
 │   ├── neonjack/  { components/, logic/, data/, adapter.ts, types.ts }
 │   ├── holdem/    { components/, logic/, adapter.ts, types.ts }
-│   ├── omaha/     { components/, logic/, adapter.ts, types.ts }
+│   ├── roulette/  { components/, logic/, adapter.ts, types.ts }
 │   └── videoPoker/{ components/, logic/, adapter.ts, types.ts }
 ├── store/
 │   └── casinoStore.ts        # user, chips, transactions, results, dailyBonus, currentRate
@@ -588,7 +582,7 @@ localStorageに触るのは `repositories/` のみ（§5.3）。Supabase移行�
 
 ### 12.9 テスト方針（追加）
 UI/ロジック分離の利点を実利化する。
-- **Vitest** で純ロジックを単体テスト：`neonjack/logic`（払い出し境界）、`videoPoker/logic`（役判定・配当表）、`holdem/omaha`（`rankFiveCardHand` と `bestHand` の組合せ）。
+- **Vitest** で純ロジックを単体テスト：`neonjack/logic`（払い出し境界）、`videoPoker/logic`（役判定・配当表）、`holdem`（役評価・ベット進行）、`roulette`（ホイール抽選・配当計算）。
 - `casinoStore` の `placeBet`/`applyGameResult`/`claimDailyBonus` のチップ整合（`balanceAfter === chips`）をテスト。
 - ポートフォリオ的にも「ロジックにテストがある」は評価が高い。
 
@@ -611,7 +605,7 @@ UI/ロジック分離の利点を実利化する。
 | 3 | プロフィール・履歴：プロフィール画面 / 総プレイ・総収支・勝利 / 最近の履歴 / デイリーボーナス / 破産救済 |
 | 4 | **Video Poker**：デッキ / 5枚配布 / Hold / 交換 / 役判定 / 配当（共通役評価コアをここで確立） |
 | 5 | Texas Hold'em：CPU対戦 / ベットラウンド / 役判定 / 勝敗 |
-| 6 | Omaha：Omaha専用の組合せ生成（手札2＋共通3）で共通役評価コアを再利用 |
+| 6 | Roulette：ベット配置 / スピン演出 / 着地番号 / 一括精算 |
 
 ---
 
@@ -656,7 +650,7 @@ UI/ロジック分離の利点を実利化する。
 【ロビー（変更しない世界観）】
 - 背景は赤系カジノ風、中央に緑のポーカーテーブル
 - テーブル上にトランプカード型のゲーム選択カード
-  A♠:NEON JACK / K♥:Texas Hold'em / Q♦:Omaha / J♣:Video Poker / Joker:Coming Soon
+  A♠:NEON JACK / K♥:Texas Hold'em / Q♦:Roulette / J♣:Video Poker / Joker:Coming Soon
 - 未実装は Coming Soon モーダル
 
 【チップ】初期10000 / localStorage(repository経由) / 不足時警告 / 破産時はRescue(残高<100で1000へ, 60分CD) / デイリー1000(ローカル日付判定)
@@ -698,7 +692,7 @@ UI/ロジック分離の利点を実利化する。
 12. **ID生成方針なし**：→ `crypto.randomUUID()`（§10）。
 13. **リロード/中断時の挙動が曖昧**：→ 原子的コミット＋中断は破棄、MVPはロビー復帰（§12.6）。
 14. **Video Poker配当表なし**：→ Jacks or Better 9-6 を定義（§9.2）。
-15. **Hold'em/Omahaの役評価関係が曖昧**：→ **5枚ランカは共有、組合せ生成だけ分離**（§9.4）。
+15. **Rouletteの進行単位が曖昧**：→ ターン制ではなく「ベット配置→スピン→一括精算」の短いフェーズ遷移で定義（§9.4）。
 16. **ロビー装飾Suit と gameplay Suit の混同**（`joker`含む）：→ 別型として明記（§9.4, §10）。
 17. **CPU AI未定義**：→ MVPは単純ルールベース、思考レベルは後フェーズ（§9.3）。
 18. **テスト方針なし**：→ Vitestで純ロジック＆store整合（§12.9）。
