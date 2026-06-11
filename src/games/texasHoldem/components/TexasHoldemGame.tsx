@@ -218,6 +218,8 @@ export function TexasHoldemGame({
                 <CommunityCards
                   cards={game.communityCards}
                   activeEvent={view.activeEvent}
+                  revealedCount={view.revealedCommunity}
+                  animated={animationEnabled}
                   reducedMotion={reducedMotion}
                   highlight={communityHighlight}
                 />

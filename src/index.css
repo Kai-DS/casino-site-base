@@ -404,6 +404,47 @@
     animation: holdemSpin 0.8s linear infinite;
   }
 
+  /* Bet/Raise range slider — make the track (line) and thumb (grab) clearly visible. */
+  .holdem-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 8px;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.16);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+  }
+  .holdem-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 9999px;
+    background: linear-gradient(180deg, var(--rail-hi), var(--rail));
+    border: 2px solid #3a2a08;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+    cursor: pointer;
+  }
+  .holdem-slider::-moz-range-track {
+    height: 8px;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.16);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+  }
+  .holdem-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 9999px;
+    background: var(--rail-hi);
+    border: 2px solid #3a2a08;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+    cursor: pointer;
+  }
+  .holdem-slider:focus-visible {
+    outline: 2px solid var(--gold-2);
+    outline-offset: 2px;
+  }
+
   /* §24.2/24.3/24.7: flip used for hero deal, community reveal, showdown CPU reveals */
   .holdem-flip {
     position: absolute;

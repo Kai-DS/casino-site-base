@@ -35,6 +35,9 @@ export interface ResultBannerView {
 export interface HoldemAnimationView {
   /** The event currently being played (null = idle). */
   activeEvent: AnimationEvent | null;
+  /** Community cards whose REVEAL event has COMPLETED (0/3/4/5). Gates the board so the flop
+   *  isn't shown face-up before its REVEAL plays (it's in game state earlier). */
+  revealedCommunity: number;
   /** Hole cards revealed so far this hand, as `${seatIndex}-${cardIndex}` (deal stagger gate). */
   dealtHoleCards: ReadonlySet<string>;
   /** CPU seats whose hole cards have been flipped face-up at showdown. */
@@ -54,6 +57,7 @@ export interface HoldemAnimationView {
 }
 
 interface Accumulators {
+  revealedCommunity: number;
   dealtHoleCards: Set<string>;
   flippedSeats: Set<number>;
   highlightBySeat: Map<number, Card[]>;
@@ -65,6 +69,7 @@ interface Accumulators {
 
 function freshAccumulators(): Accumulators {
   return {
+    revealedCommunity: 0,
     dealtHoleCards: new Set(),
     flippedSeats: new Set(),
     highlightBySeat: new Map(),
@@ -77,6 +82,7 @@ function freshAccumulators(): Accumulators {
 
 /** POST_BLIND is the first event of every hand → clear per-hand transient accumulators. */
 function resetForNewHand(acc: Accumulators): void {
+  acc.revealedCommunity = 0;
   acc.dealtHoleCards = new Set();
   acc.flippedSeats = new Set();
   acc.highlightBySeat = new Map();
@@ -92,6 +98,7 @@ function snapshot(
 ): HoldemAnimationView {
   return {
     activeEvent,
+    revealedCommunity: acc.revealedCommunity,
     dealtHoleCards: new Set(acc.dealtHoleCards),
     flippedSeats: new Set(acc.flippedSeats),
     highlightBySeat: new Map(acc.highlightBySeat),
@@ -191,6 +198,9 @@ export function useHoldemAnimationQueue(
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
       completedRef.current = head.id;
+      // The reveal has played — mark these community cards settled (face-up from now on).
+      if (head.type === "REVEAL_FLOP") acc.revealedCommunity += 3;
+      else if (head.type === "REVEAL_TURN" || head.type === "REVEAL_RIVER") acc.revealedCommunity += 1;
       onCompleteRef.current(head.id);
     }, ms);
   }, [events, reducedMotion]);
