@@ -108,7 +108,7 @@ export function HoldemControls({
               step={1}
               value={value}
               onChange={(e) => setValue(clamp(Number(e.target.value), min, max))}
-              className="h-2 flex-1 accent-[var(--rail-hi)]"
+              className="holdem-slider flex-1"
               aria-label={mode === "raise" ? "Raise amount" : "Bet amount"}
             />
             <div className="flex gap-1">

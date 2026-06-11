@@ -1,8 +1,13 @@
 // games/texasHoldem/components/CommunityCards.tsx
-// The board — the centrepiece. Flop / Turn / River reveal (spec §24.3, redesign): the cards are
-// already in game state when the logic queues a REVEAL_* event, so this derives statelessly which
-// trailing cards are "just arriving" and plays them DEALT-then-FLIPPED left→right, all inside the
-// single event window (the queue calls onAnimationEventComplete once when the gate elapses).
+// The board — the centrepiece. Flop / Turn / River reveal (spec §24.3, redesign).
+//
+// IMPORTANT: the logic puts the flop/turn/river into game.communityCards as soon as it queues the
+// REVEAL_* event, and other events (action labels, chip-to-pot) usually play *first*. So we must
+// NOT key the board off communityCards.length, or the flop flashes face-up before its reveal.
+// Instead we gate by `revealedCount` (cards whose REVEAL has completed, from the queue):
+//   • i < revealedCount                        → settled, face-up, static
+//   • during the active REVEAL, the next chunk → dealt in face-DOWN then flipped left→right
+//   • everything else                          → empty slot (hidden until its reveal plays)
 import type { CSSProperties } from "react";
 import type { AnimationEvent, Card } from "../types";
 import { COMMUNITY } from "./motion";
@@ -11,6 +16,10 @@ import { FlipCard } from "./HoldemCard";
 type CommunityCardsProps = {
   cards: Card[];
   activeEvent: AnimationEvent | null;
+  /** Community cards whose REVEAL event has completed (from the animation queue). */
+  revealedCount: number;
+  /** When false (no event queue), show the whole board immediately (no staging). */
+  animated?: boolean;
   reducedMotion?: boolean;
   highlight?: Card[];
 };
@@ -27,10 +36,17 @@ function revealingCount(activeEvent: AnimationEvent | null): number {
   }
 }
 
-export function CommunityCards({ cards, activeEvent, reducedMotion = false, highlight }: CommunityCardsProps) {
-  const total = cards.length;
-  const revealing = revealingCount(activeEvent);
-  const settled = total - revealing; // indices < settled are already face-up & static
+export function CommunityCards({
+  cards,
+  activeEvent,
+  revealedCount,
+  animated = true,
+  reducedMotion = false,
+  highlight,
+}: CommunityCardsProps) {
+  // settled = how many cards are already face-up & static. When not animating, that's all of them.
+  const settled = animated ? Math.min(revealedCount, cards.length) : cards.length;
+  const revealing = animated ? revealingCount(activeEvent) : 0;
   const isRiver = activeEvent?.type === "REVEAL_RIVER";
   const highlightIds = new Set((highlight ?? []).map((c) => c.id));
 
@@ -38,7 +54,10 @@ export function CommunityCards({ cards, activeEvent, reducedMotion = false, high
     <div className="flex items-center justify-center gap-2 sm:gap-2.5">
       {Array.from({ length: 5 }).map((_, i) => {
         const card = cards[i];
-        if (!card) {
+        const isSettled = i < settled;
+        const isRevealing = !isSettled && i < settled + revealing;
+        if (!card || (!isSettled && !isRevealing)) {
+          // Empty slot (also hides cards already in state but not yet revealed).
           return (
             <div
               key={`slot-${i}`}
@@ -46,10 +65,9 @@ export function CommunityCards({ cards, activeEvent, reducedMotion = false, high
             />
           );
         }
-        const justRevealed = i >= settled;
-        // j = position within the group currently being revealed (0,1,2 for the flop) → left→right.
+        // j = position within the chunk being revealed now (0,1,2 for the flop) → left→right.
         const j = i - settled;
-        const dealing = justRevealed && !reducedMotion;
+        const dealing = isRevealing && !reducedMotion;
         const dealDelay = dealing ? j * COMMUNITY.stagger : 0;
         const flipDelay = dealing ? dealDelay + COMMUNITY.dealMs + COMMUNITY.flipOffset : 0;
         const isWinning = highlightIds.has(card.id);
@@ -57,7 +75,7 @@ export function CommunityCards({ cards, activeEvent, reducedMotion = false, high
           <div
             key={card.id}
             className={`w-14 transition-transform sm:w-16 ${isWinning ? "holdem-win-shimmer -translate-y-1.5" : ""} ${
-              isRiver && justRevealed ? "drop-shadow-[0_0_16px_rgba(244,214,128,0.75)]" : "drop-shadow-[0_6px_12px_rgba(0,0,0,0.5)]"
+              isRiver && isRevealing ? "drop-shadow-[0_0_16px_rgba(244,214,128,0.75)]" : "drop-shadow-[0_6px_12px_rgba(0,0,0,0.5)]"
             } ${dealing ? "holdem-card-deal" : ""}`}
             style={
               dealing
@@ -73,7 +91,7 @@ export function CommunityCards({ cards, activeEvent, reducedMotion = false, high
             <FlipCard
               card={card}
               faceUp
-              initialFaceDown={justRevealed}
+              initialFaceDown={isRevealing}
               winning={isWinning}
               reducedMotion={reducedMotion}
               delayMs={flipDelay}
