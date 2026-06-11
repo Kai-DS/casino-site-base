@@ -23,8 +23,8 @@ export const GAMES: readonly GameInfo[] = [
   {
     id: "roulette",
     title: "Roulette",
-    description: "Place chips, spin the wheel, and resolve in one shot. Coming soon.",
-    status: "comingSoon",
+    description: "Place chips, spin the wheel, and resolve in one shot.",
+    status: "available",
     cardRank: "Q",
     cardSuit: "diamond",
     path: "/games/roulette",
