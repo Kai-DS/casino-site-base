@@ -1,5 +1,5 @@
 // types/game.ts — see spec §10
-export type GameId = "neonjack" | "holdem" | "omaha" | "videoPoker";
+export type GameId = "neonjack" | "holdem" | "roulette" | "videoPoker";
 
 export type GameStatus = "available" | "comingSoon";
 
