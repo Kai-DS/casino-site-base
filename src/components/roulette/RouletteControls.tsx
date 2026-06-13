@@ -1,9 +1,10 @@
 // components/roulette/RouletteControls.tsx
-// The control bar. RULE (base spec §7.4): every button's enabled state + disabled reason comes ONLY
-// from `availableActions` — the UI never re-derives legality. Also hosts the 通常/映画 animation-mode
-// toggle (addendum §12). `clear` and `newBets` are kept distinct (never one dual-purpose button).
+// The leather control rail (Perspective Redesign §7): [mode + BET TOTAL] | [ChipSelector] |
+// [UNDO CLEAR REBET NEW BETS] [SPIN]. RULE (base spec §7.4): every button's enabled state + disabled
+// reason comes ONLY from `availableActions`; the UI never re-derives legality. Disabled stays READABLE
+// (ink-dim, not opacity-crushed). `clear` and `newBets` are kept distinct.
+import type { ReactNode } from "react";
 import { formatChips } from "@/utils/format";
-import { CasinoButton } from "@/components/casino/CasinoButton";
 import type { AvailableActions } from "@/games/roulette/types";
 import type { RouletteAnimationMode } from "./animationMode";
 import { reasonText } from "./rouletteLabels";
@@ -12,7 +13,7 @@ interface RouletteControlsProps {
   availableActions: AvailableActions;
   stagedTotal: number;
   mode: RouletteAnimationMode;
-  reducedActive: boolean;
+  chipSelector: ReactNode;
   onSpin: () => void;
   onUndo: () => void;
   onClear: () => void;
@@ -25,7 +26,7 @@ export function RouletteControls({
   availableActions,
   stagedTotal,
   mode,
-  reducedActive,
+  chipSelector,
   onSpin,
   onUndo,
   onClear,
@@ -33,111 +34,85 @@ export function RouletteControls({
   onNewBets,
   onModeChange,
 }: RouletteControlsProps) {
+  const spin = availableActions.spin;
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/45 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <ModeToggle mode={mode} reducedActive={reducedActive} onChange={onModeChange} />
-        <div className="text-right">
-          <div className="text-[9px] uppercase tracking-wide text-white/40">Bet total</div>
-          <div className="font-display text-lg tabular-nums text-[var(--gold-2)]">{formatChips(stagedTotal)}</div>
+    <div className="flex h-full flex-wrap items-center justify-between gap-3">
+      {/* left: mode + bet total */}
+      <div className="flex shrink-0 items-center gap-3">
+        <div>
+          <div className="mb-1 text-[9px] uppercase tracking-wide text-[var(--rl-ink-dim)]">
+            演出
+          </div>
+          <div className="inline-flex overflow-hidden rounded-md border border-[var(--rl-gold)]/40">
+            <ModeBtn active={mode === "standard"} title="テンポ重視の短い3Dスピン" onClick={() => onModeChange("standard")}>通常</ModeBtn>
+            <ModeBtn active={mode === "full"} title="ホイールに寄って落下まで見せる3D演出" onClick={() => onModeChange("full")}>ロング</ModeBtn>
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] uppercase tracking-wide text-[var(--rl-ink-dim)]">Bet total</div>
+          <div className="font-display text-xl tabular-nums text-[var(--rl-gold-hi)]">{formatChips(stagedTotal)}</div>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-stretch justify-center gap-2">
-        <CasinoButton
-          tone="neutral"
-          disabled={!availableActions.undo.enabled}
-          disabledReason={reasonText(availableActions.undo.reason)}
-          onClick={onUndo}
-        >
-          Undo
-        </CasinoButton>
-        <CasinoButton
-          tone="danger"
-          disabled={!availableActions.clear.enabled}
-          disabledReason={reasonText(availableActions.clear.reason)}
-          onClick={onClear}
-        >
-          Clear
-        </CasinoButton>
-        <CasinoButton
-          tone="gold"
-          disabled={!availableActions.spin.enabled}
-          disabledReason={reasonText(availableActions.spin.reason)}
-          hint={availableActions.spin.enabled ? formatChips(availableActions.spin.amount ?? stagedTotal) : undefined}
+      {/* center: chips */}
+      <div className="order-last flex w-full justify-center sm:order-none sm:w-auto sm:flex-1">{chipSelector}</div>
+
+      {/* right: actions + SPIN */}
+      <div className="flex shrink-0 items-center gap-2">
+        <Pill av={availableActions.undo} onClick={onUndo}>Undo</Pill>
+        <Pill av={availableActions.clear} onClick={onClear} danger>Clear</Pill>
+        <Pill av={availableActions.rebet} onClick={onRebet} hint={availableActions.rebet.amount}>Rebet</Pill>
+        <Pill av={availableActions.newBets} onClick={onNewBets}>New Bets</Pill>
+        <button
+          type="button"
+          disabled={!spin.enabled}
+          title={spin.enabled ? undefined : reasonText(spin.reason)}
           onClick={onSpin}
-          className="min-w-[7rem]"
+          className="rl-spin-btn focus-ring flex h-[88px] w-[88px] flex-col items-center justify-center rounded-full font-display text-[#2a1d05]"
         >
-          Spin
-        </CasinoButton>
-        <CasinoButton
-          tone="neutral"
-          disabled={!availableActions.rebet.enabled}
-          disabledReason={reasonText(availableActions.rebet.reason)}
-          hint={availableActions.rebet.amount ? formatChips(availableActions.rebet.amount) : undefined}
-          onClick={onRebet}
-        >
-          Rebet
-        </CasinoButton>
-        <CasinoButton
-          tone="call"
-          disabled={!availableActions.newBets.enabled}
-          disabledReason={reasonText(availableActions.newBets.reason)}
-          onClick={onNewBets}
-        >
-          New Bets
-        </CasinoButton>
+          <span className="text-lg font-bold tracking-wide">SPIN</span>
+          {spin.enabled && <span className="text-[11px] font-semibold tabular-nums">{formatChips(spin.amount ?? stagedTotal)}</span>}
+        </button>
       </div>
     </div>
   );
 }
 
-function ModeToggle({
-  mode,
-  reducedActive,
-  onChange,
-}: {
-  mode: RouletteAnimationMode;
-  reducedActive: boolean;
-  onChange: (mode: RouletteAnimationMode) => void;
-}) {
-  return (
-    <div>
-      <div className="mb-1 text-[9px] uppercase tracking-wide text-white/40">
-        演出{reducedActive && <span className="ml-1 text-[var(--gold-2)]">（reduced motion 有効）</span>}
-      </div>
-      <div className="inline-flex overflow-hidden rounded-lg border border-white/15">
-        <ModeButton active={mode === "standard"} title="テンポ重視の短いスピン演出" onClick={() => onChange("standard")}>
-          通常
-        </ModeButton>
-        <ModeButton active={mode === "full"} title="ホイールへズームして落下まで見せる演出" onClick={() => onChange("full")}>
-          映画
-        </ModeButton>
-      </div>
-    </div>
-  );
-}
-
-function ModeButton({
-  active,
-  title,
+function Pill({
+  av,
   onClick,
   children,
+  danger,
+  hint,
 }: {
-  active: boolean;
-  title: string;
+  av: { enabled: boolean; reason?: import("@/games/roulette/types").RouletteActionError; amount?: number };
   onClick: () => void;
   children: string;
+  danger?: boolean;
+  hint?: number;
 }) {
+  return (
+    <button
+      type="button"
+      disabled={!av.enabled}
+      title={av.enabled ? undefined : reasonText(av.reason)}
+      onClick={onClick}
+      className={`rl-pill focus-ring flex flex-col items-center rounded-full px-3 py-2 text-xs font-semibold uppercase tracking-wide ${danger ? "!border-red-400/50" : ""}`}
+    >
+      <span>{children}</span>
+      {hint != null && av.enabled ? <span className="text-[9px] tabular-nums opacity-80">{formatChips(hint)}</span> : null}
+    </button>
+  );
+}
+
+function ModeBtn({ active, title, onClick, children }: { active: boolean; title: string; onClick: () => void; children: string }) {
   return (
     <button
       type="button"
       title={title}
       aria-pressed={active}
       onClick={onClick}
-      className={`focus-ring px-3 py-1 text-xs font-semibold transition-colors ${
-        active ? "bg-[var(--gold-2)] text-[#2a1d05]" : "bg-transparent text-white/70 hover:bg-white/10"
-      }`}
+      className={`focus-ring px-3 py-1 text-xs font-semibold transition-colors ${active ? "bg-[var(--rl-gold)] text-[#2a1d05]" : "bg-transparent text-[var(--rl-ink-dim)] hover:bg-white/10"}`}
     >
       {children}
     </button>

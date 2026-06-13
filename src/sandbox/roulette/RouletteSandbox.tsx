@@ -141,6 +141,10 @@ export function RouletteSandbox() {
             <Row k="chips (mock)" val={String(economy.chips)} />
           </Panel>
 
+          <Panel title="Placed bets (positionId)">
+            <div data-placed className="break-all text-[10px] text-white/70">{inspect?.placedPositionIds.join(" ") || "—"}</div>
+          </Panel>
+
           <Panel title="availableActions">
             <pre className="overflow-x-auto whitespace-pre-wrap text-[10px] text-white/70">
               {inspect ? formatActions(inspect.availableActions) : "—"}
