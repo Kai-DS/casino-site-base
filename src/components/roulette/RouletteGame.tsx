@@ -83,7 +83,10 @@ export function RouletteGame({
   const isMobile = useIsMobile();
 
   const game = useRoulette({ rate, economy, animationEnabled, resultProvider: providers?.resultProvider });
-  const view = useRouletteAnimationQueue(game.animationEvents, game.onAnimationEventComplete, mode, reducedMotion);
+  // The wheel reports its real landing completion through this ref (§17); the queue acks BALL_LAND on it.
+  const landingReporterRef = useRef<((eventId: string) => void) | null>(null);
+  const view = useRouletteAnimationQueue(game.animationEvents, game.onAnimationEventComplete, mode, reducedMotion, landingReporterRef);
+  const onLandingComplete = useCallback((eventId: string) => landingReporterRef.current?.(eventId), []);
 
   if (flushRef) flushRef.current = game.flushPendingSettlement;
 
@@ -128,6 +131,7 @@ export function RouletteGame({
   const betting = game.state.phase === "betting" && !game.isAnimating;
   const winningNumber = view.resultRevealed ? view.dollyNumber ?? view.landedNumber : null;
   const cinematic = effMode === "full" && WHEEL_FOCUSED.has(view.visualFocus);
+  const landEventId = view.activeEvent?.type === "BALL_LAND" ? view.activeEvent.id : null;
 
   const place = (id: PositionId) => flash(game.placeChip(id));
   const callBet = (id: CallBetId) => flash(game.placeCallBet(id));
@@ -175,6 +179,10 @@ export function RouletteGame({
                   landMs={landMs}
                   closeUp={cinematic}
                   reducedMotion={reducedMotion}
+                  landEventId={landEventId}
+                  onLandingComplete={onLandingComplete}
+                  landingStartedAtMs={view.landingStartedAtMs}
+                  forceFinalizeLanding={view.forceFinalizeLanding}
                 />
               </div>
               <HistoryStrip history={game.state.history} />

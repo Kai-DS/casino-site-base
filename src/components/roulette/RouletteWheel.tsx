@@ -20,6 +20,14 @@ export interface RouletteWheelProps {
   /** Long-mode cinematic close-up (camera dolly in the 3D wheel). */
   closeUp?: boolean;
   reducedMotion?: boolean;
+  /** Id of the live BALL_LAND event (null otherwise) — the wheel echoes it back when the ball settles. */
+  landEventId?: string | null;
+  /** Called ONCE when the rendered wheel's landing actually completes, so the queue can ack BALL_LAND. */
+  onLandingComplete?: (eventId: string) => void;
+  /** performance.now() when BALL_LAND started — lets a late-mounting wheel inherit elapsed time. */
+  landingStartedAtMs?: number | null;
+  /** Queue's force-finalize request: the wheel snaps to final and reports on the next paintable frame. */
+  forceFinalizeLanding?: boolean;
 }
 
 function webglSupported(): boolean {
@@ -58,6 +66,10 @@ export function RouletteWheel(props: RouletteWheelProps) {
         mode={props.mode}
         spinMs={props.spinMs}
         landMs={props.landMs}
+        landEventId={props.landEventId ?? null}
+        onLandingComplete={props.onLandingComplete}
+        landingStartedAtMs={props.landingStartedAtMs ?? null}
+        forceFinalizeLanding={props.forceFinalizeLanding ?? false}
       />
     </div>
   );
@@ -76,6 +88,10 @@ export function RouletteWheel(props: RouletteWheelProps) {
           spinMs={props.spinMs}
           landMs={props.landMs}
           closeUp={props.closeUp ?? false}
+          landEventId={props.landEventId ?? null}
+          onLandingComplete={props.onLandingComplete}
+          landingStartedAtMs={props.landingStartedAtMs ?? null}
+          forceFinalizeLanding={props.forceFinalizeLanding ?? false}
         />
       </Suspense>
     </WheelErrorBoundary>

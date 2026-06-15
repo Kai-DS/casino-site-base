@@ -2,7 +2,7 @@
 // Pure CSS/SVG 2.5D wheel — the fallback when WebGL is unavailable, 3D init fails, or reduced motion is
 // active (§14). Same rotor/ball landing math as the 3D path (whole turns → pockets at angleOf(n); ball
 // settles to angleOf(landedNumber)); never reads the result from an angle.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EASING } from "./motion";
 import type { RouletteAnimationMode } from "./animationMode";
 import { WHEEL_GEOMETRY, angleOf } from "./wheelGeometry";
@@ -11,6 +11,15 @@ const G = WHEEL_GEOMETRY;
 const RIM_R = G.ballR;
 const REST_R = G.labelR + 1.5;
 const POCKET_FILL: Record<string, string> = { red: "var(--rl-red)", black: "var(--rl-black)", green: "var(--rl-zero)" };
+const nowMs = (): number => (typeof performance !== "undefined" ? performance.now() : Date.now());
+const reqPaint = (cb: FrameRequestCallback): number =>
+  typeof window !== "undefined" && window.requestAnimationFrame
+    ? window.requestAnimationFrame(cb)
+    : (window.setTimeout(() => cb(nowMs()), 16) as unknown as number);
+const cancelP = (id: number): void => {
+  if (typeof window !== "undefined" && window.cancelAnimationFrame) window.cancelAnimationFrame(id);
+  else window.clearTimeout(id);
+};
 
 type Phase = "idle" | "spin" | "land";
 
@@ -22,6 +31,14 @@ export interface RouletteWheelFallbackProps {
   mode: RouletteAnimationMode;
   spinMs: number;
   landMs: number;
+  /** Id of the live BALL_LAND event — echoed back when the CSS landing finishes (§17). */
+  landEventId?: string | null;
+  /** Called ONCE when the (time-based) landing completes AND a frame painted, so the queue can ack (§17). */
+  onLandingComplete?: (eventId: string) => void;
+  /** performance.now() when BALL_LAND started — a mid-landing mount only waits the REMAINING time. */
+  landingStartedAtMs?: number | null;
+  /** Queue's force-finalize request: snap to final and report on the next paintable frame (§17). */
+  forceFinalizeLanding?: boolean;
 }
 
 const SPIN_TURNS: Record<RouletteAnimationMode, number> = { standard: 5, full: 9, reduced: 1 };
@@ -32,10 +49,48 @@ function settleBelow(ceil: number, targetMod: number): number {
   return ceil - rem;
 }
 
-export function RouletteWheelFallback({ activeEventType, landedNumber, resultRevealed, dollyNumber, mode, spinMs, landMs }: RouletteWheelFallbackProps) {
+export function RouletteWheelFallback({ activeEventType, landedNumber, resultRevealed, dollyNumber, mode, spinMs, landMs, landEventId = null, onLandingComplete, landingStartedAtMs = null, forceFinalizeLanding = false }: RouletteWheelFallbackProps) {
   const wheelDegRef = useRef(0);
   const ballDegRef = useRef(0);
   const phaseRef = useRef<Phase>("idle");
+
+  // landing-complete handshake (§17): the fallback settles over its REMAINING time, then reports on the
+  // next paintable frame (rAF — paused while hidden) so the banner can never precede the settled ball.
+  // Refs avoid stale closures; once per id. Both the timer and the rAF are cleared on event/id change
+  // and unmount.
+  const onLandingCompleteRef = useRef(onLandingComplete);
+  onLandingCompleteRef.current = onLandingComplete;
+  const landTimerRef = useRef<number | null>(null);
+  const landRafRef = useRef<number | null>(null);
+  const reportedLandRef = useRef<string | null>(null);
+
+  const clearLandReport = useCallback(() => {
+    if (landTimerRef.current !== null) {
+      window.clearTimeout(landTimerRef.current);
+      landTimerRef.current = null;
+    }
+    if (landRafRef.current !== null) {
+      cancelP(landRafRef.current);
+      landRafRef.current = null;
+    }
+  }, []);
+
+  const scheduleLandReport = useCallback(
+    (eid: string | null, delayMs: number) => {
+      clearLandReport();
+      landTimerRef.current = window.setTimeout(() => {
+        landTimerRef.current = null;
+        landRafRef.current = reqPaint(() => {
+          landRafRef.current = null;
+          if (eid && reportedLandRef.current !== eid) {
+            reportedLandRef.current = eid;
+            onLandingCompleteRef.current?.(eid);
+          }
+        });
+      }, Math.max(0, delayMs));
+    },
+    [clearLandReport],
+  );
 
   const [wheelDeg, setWheelDeg] = useState(0);
   const [ballDeg, setBallDeg] = useState(0);
@@ -62,11 +117,31 @@ export function RouletteWheelFallback({ activeEventType, landedNumber, resultRev
       setWheelDeg(wheelDegRef.current);
       setBallDeg(ballDegRef.current);
       setBallR(REST_R);
-      setTrans({ ms: Math.max(80, landMs), ease: EASING.decel });
+      // inherit elapsed time: a mid-landing mount (3D→fallback switch) only waits the REMAINDER. If the
+      // nominal duration is already spent (or force-finalize is requested), snap to final immediately.
+      const nominal = Math.max(80, landMs);
+      const started = landingStartedAtMs ?? nowMs();
+      const remaining = forceFinalizeLanding ? 0 : Math.max(0, nominal - (nowMs() - started));
+      setTrans({ ms: remaining, ease: remaining > 0 ? EASING.decel : "linear" });
+      scheduleLandReport(landEventId, remaining);
     } else if (activeEventType === "NO_MORE_BETS") {
       phaseRef.current = "idle";
     }
-  }, [activeEventType, landedNumber, mode, spinMs, landMs]);
+  }, [activeEventType, landedNumber, mode, spinMs, landMs, landEventId, landingStartedAtMs, forceFinalizeLanding, scheduleLandReport]);
+
+  // Force-finalize while already settling (the queue's deadline passed): snap to final, report next paint.
+  useEffect(() => {
+    if (forceFinalizeLanding && activeEventType === "BALL_LAND" && phaseRef.current === "land") {
+      setTrans({ ms: 0, ease: "linear" });
+      setBallR(REST_R);
+      scheduleLandReport(landEventId, 0);
+    }
+  }, [forceFinalizeLanding, activeEventType, landEventId, scheduleLandReport]);
+
+  // Clear any pending land report when we leave BALL_LAND, when the event id changes, and on unmount —
+  // so a stale event id is never reported and no timer/rAF leaks. (React runs cleanups before the next
+  // commit's setups, so the report scheduled for the live BALL_LAND is never cancelled prematurely.)
+  useEffect(() => clearLandReport, [activeEventType, landEventId, clearLandReport]);
 
   const winner = resultRevealed ? dollyNumber ?? landedNumber : null;
   const transition = `transform ${trans.ms}ms ${trans.ease}`;
