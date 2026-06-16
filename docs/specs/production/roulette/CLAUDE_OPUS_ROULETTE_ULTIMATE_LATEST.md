@@ -26,8 +26,8 @@ CLAUDE_OPUS_ROULETTE_ULTIMATE_LATEST.md
 
 # 実装指示
 
-送信先: Claude Code  
-想定モデル: 利用可能な最新のClaude Opus（推奨: Opus 4.8）  
+送信先: Claude Code
+想定モデル: 利用可能な最新のClaude Opus（推奨: Opus 4.8）
 目的: ヨーロピアンルーレットの3Dホイール演出を、Webブラウザ上で可能な限り最高品質へ再設計・直接実装する
 
 あなたは、このタスクにおいて以下を兼任するシニアエンジニア兼テクニカルディレクターです。
