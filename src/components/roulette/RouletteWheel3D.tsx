@@ -41,6 +41,8 @@ export interface RouletteWheel3DProps {
   landMs: number;
   /** Long-mode cinematic close-up (camera dolly in). */
   closeUp: boolean;
+  /** Debug-only fixed motion variant override. */
+  motionVariantOverride?: string | null;
   /** Id of the live BALL_LAND event (null otherwise) — echoed back via onLandingComplete (§17). */
   landEventId?: string | null;
   /** Called ONCE when the ball has settled AND a frame has painted, so the queue can ack BALL_LAND (§17). */
@@ -112,42 +114,97 @@ const deg = THREE.MathUtils.degToRad;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
+function rouletteDebugMotionFromQuery(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return new URLSearchParams(window.location.search).get("rouletteDebugMotion") === "1";
+  } catch {
+    return false;
+  }
+}
+
+interface MotionDebugState {
+  mode: RouletteAnimationMode;
+  variantId: string | null;
+  phase: string;
+  pocketStage: string | null;
+  spinSequence: number;
+  bagIndex: number | null;
+  bagSlot: number | null;
+}
+
 // camera framing lives in ./wheel3dCamera — one fixed 3/4 view shared by EVERY mode (no per-mode dolly).
 
 export function RouletteWheel3D(props: RouletteWheel3DProps) {
+  const debugMotion = rouletteDebugMotionFromQuery();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const debugPanelRef = useRef<HTMLDivElement>(null);
+  const writeMotionDebug = (sample: MotionDebugState) => {
+    const root = rootRef.current;
+    if (root) {
+      root.dataset.motionMode = sample.mode;
+      root.dataset.motionVariant = sample.variantId ?? "";
+      root.dataset.motionPhase = sample.phase;
+      root.dataset.pocketStage = sample.pocketStage ?? "";
+      root.dataset.motionStage = sample.pocketStage ?? "";
+      root.dataset.spinSequence = String(sample.spinSequence);
+      root.dataset.motionBagIndex = sample.bagIndex == null ? "" : String(sample.bagIndex);
+      root.dataset.motionBagSlot = sample.bagSlot == null ? "" : String(sample.bagSlot);
+    }
+    if (debugPanelRef.current) {
+      debugPanelRef.current.textContent = [
+        `mode: ${sample.mode}`,
+        `variant: ${sample.variantId ?? "none"}`,
+        `phase: ${sample.phase}`,
+        `pocket: ${sample.pocketStage ?? "none"}`,
+        `spin: ${sample.spinSequence} bag: ${sample.bagIndex ?? "-"}:${sample.bagSlot ?? "-"}`,
+      ].join("\n");
+    }
+  };
   return (
-    <Canvas
-      dpr={[1, 2]}
-      shadows={false}
-      gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
-      camera={{ position: WHEEL_CAMERA_POSITION.toArray(), fov: WHEEL_CAMERA_FOV, near: 0.1, far: 100 }}
-      onCreated={({ gl }) => {
-        gl.toneMapping = THREE.ACESFilmicToneMapping;
-        gl.toneMappingExposure = 1.06;
-      }}
-      style={{ width: "100%", height: "100%" }}
+    <div
+      ref={rootRef}
+      style={{ position: "relative", width: "100%", height: "100%" }}
     >
-      {/* studio key / fill / rim — restrained, lets material + form carry the luxury (§15) */}
-      <ambientLight intensity={0.46} />
-      <directionalLight position={[6, 10, 5]} intensity={1.7} color="#fff2d2" />
-      <directionalLight position={[-7, 5, -2]} intensity={0.55} color="#bcd2ff" />
-      <directionalLight position={[0, 5.5, -9]} intensity={0.8} color="#ffe6b0" />
-      {/* soft downlight so the recessed pockets read their colour */}
-      <pointLight position={[0, 7, 0.5]} intensity={0.7} distance={22} decay={1.4} color="#fff4dc" />
-      <pointLight position={[0, 4, 2.5]} intensity={0.4} color="#fff6e8" />
-      {/* procedural env map (no external HDR) for the metal reflections */}
-      <Environment resolution={128} frames={1}>
-        <Lightformer intensity={2.4} position={[0, 6, -3]} scale={[9, 9, 1]} color="#fff3c0" />
-        <Lightformer intensity={1.2} position={[-5, 2, 4]} scale={[5, 6, 1]} color="#ffffff" />
-        <Lightformer intensity={0.9} position={[5, 3, 3]} scale={[4, 5, 1]} color="#ffe9b0" />
-        <Lightformer intensity={0.6} position={[0, -4, 2]} scale={[8, 8, 1]} color="#6a5230" />
-      </Environment>
-      <WheelScene {...props} />
-    </Canvas>
+      <Canvas
+        dpr={[1, 2]}
+        shadows={false}
+        gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
+        camera={{ position: WHEEL_CAMERA_POSITION.toArray(), fov: WHEEL_CAMERA_FOV, near: 0.1, far: 100 }}
+        onCreated={({ gl }) => {
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 1.06;
+        }}
+        style={{ width: "100%", height: "100%" }}
+      >
+        {/* studio key / fill / rim — restrained, lets material + form carry the luxury (§15) */}
+        <ambientLight intensity={0.46} />
+        <directionalLight position={[6, 10, 5]} intensity={1.7} color="#fff2d2" />
+        <directionalLight position={[-7, 5, -2]} intensity={0.55} color="#bcd2ff" />
+        <directionalLight position={[0, 5.5, -9]} intensity={0.8} color="#ffe6b0" />
+        {/* soft downlight so the recessed pockets read their colour */}
+        <pointLight position={[0, 7, 0.5]} intensity={0.7} distance={22} decay={1.4} color="#fff4dc" />
+        <pointLight position={[0, 4, 2.5]} intensity={0.4} color="#fff6e8" />
+        {/* procedural env map (no external HDR) for the metal reflections */}
+        <Environment resolution={128} frames={1}>
+          <Lightformer intensity={2.4} position={[0, 6, -3]} scale={[9, 9, 1]} color="#fff3c0" />
+          <Lightformer intensity={1.2} position={[-5, 2, 4]} scale={[5, 6, 1]} color="#ffffff" />
+          <Lightformer intensity={0.9} position={[5, 3, 3]} scale={[4, 5, 1]} color="#ffe9b0" />
+          <Lightformer intensity={0.6} position={[0, -4, 2]} scale={[8, 8, 1]} color="#6a5230" />
+        </Environment>
+        <WheelScene {...props} debugMotion={debugMotion} onDebugMotion={writeMotionDebug} />
+      </Canvas>
+      {debugMotion && (
+        <div
+          ref={debugPanelRef}
+          className="pointer-events-none absolute left-2 top-2 whitespace-pre rounded border border-white/20 bg-black/70 px-2 py-1 font-mono text-[10px] leading-4 text-white/85"
+        />
+      )}
+    </div>
   );
 }
 
-function WheelScene({ activeEventType, landedNumber, resultRevealed, dollyNumber, mode, spinMs, landMs, landEventId, onLandingComplete, forceFinalizeLanding }: RouletteWheel3DProps) {
+function WheelScene({ activeEventType, landedNumber, resultRevealed, dollyNumber, mode, spinMs, landMs, landEventId, onLandingComplete, forceFinalizeLanding, motionVariantOverride, debugMotion, onDebugMotion }: RouletteWheel3DProps & { debugMotion?: boolean; onDebugMotion?: (sample: MotionDebugState) => void }) {
   // NOTE: `closeUp` (and `mode`'s camera influence) are intentionally NOT read here — the camera framing
   // is fixed and identical for every mode (see ./wheel3dCamera). Only the BALL's timing/motion/density
   // differ by mode. `closeUp` stays on the props contract but has no 3D-camera effect.
@@ -175,12 +232,14 @@ function WheelScene({ activeEventType, landedNumber, resultRevealed, dollyNumber
   forceFinalizeRef.current = forceFinalizeLanding;
   const finalAppliedRef = useRef<string | null>(null); // final transform applied & painted for this id
   const reportedLandRef = useRef<string | null>(null);
+  const debugKeyRef = useRef("");
 
   const res = useWheelResources();
 
   useEffect(() => {
     const now = performance.now();
     const anim = animRef.current!;
+    anim.setMotionVariantOverride(motionVariantOverride ?? null);
     if (activeEventType === "SPIN_START" && phaseRef.current !== "spin") {
       phaseRef.current = "spin";
       setBallVisible(true);
@@ -193,7 +252,7 @@ function WheelScene({ activeEventType, landedNumber, resultRevealed, dollyNumber
       setBallVisible(false); // hide before re-parking so the next spin starts cleanly on the track
       anim.reset();
     }
-  }, [activeEventType, landedNumber, mode, spinMs, landMs]);
+  }, [activeEventType, landedNumber, mode, spinMs, landMs, motionVariantOverride]);
 
   useFrame(({ camera }) => {
     const now = performance.now();
@@ -201,6 +260,21 @@ function WheelScene({ activeEventType, landedNumber, resultRevealed, dollyNumber
     // honour a force-finalize request from the queue (snap the landing to its final state)
     if (forceFinalizeRef.current && phaseRef.current === "land") anim.forceFinalize();
     const s = anim.sample(now);
+    if (debugMotion && onDebugMotion) {
+      const nextKey = `${mode}:${s.variantId ?? ""}:${s.phase}:${s.pocketStage ?? ""}:${s.spinSequence}:${s.motionBagIndex ?? ""}:${s.motionBagSlot ?? ""}`;
+      if (nextKey !== debugKeyRef.current) {
+        debugKeyRef.current = nextKey;
+        onDebugMotion({
+          mode,
+          variantId: s.variantId,
+          phase: s.phase,
+          pocketStage: s.pocketStage,
+          spinSequence: s.spinSequence,
+          bagIndex: s.motionBagIndex,
+          bagSlot: s.motionBagSlot,
+        });
+      }
+    }
     if (rotorRef.current) rotorRef.current.rotation.y = deg(s.rotorDeg);
     if (ballRef.current) {
       const a = (s.ballDeg * Math.PI) / 180;

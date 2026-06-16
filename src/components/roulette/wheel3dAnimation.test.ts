@@ -4,12 +4,20 @@ import {
   WHEEL_MOTION_PROFILES,
   BOUNCE_STAGE_CENTERS,
   BOUNCE_STAGE_GAINS,
+  POCKET_HOP_BUDGETS,
+  ROULETTE_MOTION_VARIANTS,
+  rouletteMotionVariantsForMode,
+  rouletteMotionVariantSequence,
+  pocketStageWindows,
   pocketBounceOverlay,
+  type PocketAngularStage,
+  type RouletteMotionVariantId,
   type WheelSample,
 } from "./wheel3dAnimation";
 import { R } from "./wheel3dGeometry";
 import { FULL_DRAMA_DURATIONS, STANDARD_DURATIONS } from "./motion";
 import type { RouletteAnimationMode } from "./animationMode";
+import { resolveRouletteDebugMotion } from "./rouletteDebugMotion";
 
 // ── INDEPENDENT ORACLE ───────────────────────────────────────────────────────
 // The canonical single-zero European wheel sequence, transcribed here independently of the source
@@ -46,10 +54,61 @@ const MODES: RouletteAnimationMode[] = ["standard", "full", "reduced"];
 const REALISM_MODES: Array<"standard" | "full"> = ["standard", "full"];
 const ALL_NUMBERS = Array.from({ length: 37 }, (_, n) => n);
 const FORCED_RESULTS = [0, 5, 10, 17, 26];
+const POCKET_STAGES: Exclude<PocketAngularStage, "deflector_exit">[] = ["pocket_hop_1", "pocket_hop_2", "pocket_hop_3", "pocket_settle"];
 const NOMINAL = {
   standard: { spinMs: STANDARD_DURATIONS.SPIN_START, landMs: STANDARD_DURATIONS.BALL_LAND },
   full: { spinMs: FULL_DRAMA_DURATIONS.SPIN_START, landMs: FULL_DRAMA_DURATIONS.BALL_LAND },
 } as const;
+type StandardVariantId = Extract<RouletteMotionVariantId, "standard_direct" | "standard_high_hop" | "standard_shallow_hit">;
+const STANDARD_VARIANTS: readonly StandardVariantId[] = ["standard_direct", "standard_high_hop", "standard_shallow_hit"];
+
+interface StandardMotionMetrics {
+  peakBallDegPerSec: number;
+  peakRotorDegPerSec: number;
+  peakRelativeDegPerSec: number;
+  spinEndBallDegPerSec: number;
+  landStartRelativeDegPerSec: number;
+  prePocketBallTurns: number;
+  prePocketRelativeTurns: number;
+  fullBallTurns: number;
+  fullRelativeTurns: number;
+}
+
+const PRE_SLOWDOWN_STANDARD_METRICS: Readonly<Record<StandardVariantId, StandardMotionMetrics>> = {
+  standard_direct: {
+    peakBallDegPerSec: 943.404989,
+    peakRotorDegPerSec: 958.370009,
+    peakRelativeDegPerSec: 1493.983374,
+    spinEndBallDegPerSec: 432,
+    landStartRelativeDegPerSec: 756,
+    prePocketBallTurns: 4.826353,
+    prePocketRelativeTurns: 6.622158,
+    fullBallTurns: 6.344326,
+    fullRelativeTurns: 6.78378,
+  },
+  standard_high_hop: {
+    peakBallDegPerSec: 918.159682,
+    peakRotorDegPerSec: 674.79883,
+    peakRelativeDegPerSec: 1453.313915,
+    spinEndBallDegPerSec: 432,
+    landStartRelativeDegPerSec: 756,
+    prePocketBallTurns: 4.236482,
+    prePocketRelativeTurns: 6.622158,
+    fullBallTurns: 5.27476,
+    fullRelativeTurns: 6.78378,
+  },
+  standard_shallow_hit: {
+    peakBallDegPerSec: 959.220253,
+    peakRotorDegPerSec: 970.812879,
+    peakRelativeDegPerSec: 1519.35062,
+    spinEndBallDegPerSec: 410.4,
+    landStartRelativeDegPerSec: 741.6,
+    prePocketBallTurns: 4.821144,
+    prePocketRelativeTurns: 6.622158,
+    fullBallTurns: 6.427855,
+    fullRelativeTurns: 6.78378,
+  },
+};
 
 interface SettleOpts {
   seed?: number | null;
@@ -114,11 +173,402 @@ function timelineSample(mode: "standard" | "full", n: number, stepMs: number, ch
   return out;
 }
 
+function captureInfoFor(mode: "standard" | "full", n = 17, variantId: RouletteMotionVariantId | null = null) {
+  const { spinMs, landMs } = NOMINAL[mode];
+  const anim = new WheelAnimator();
+  anim.setSeed(7);
+  anim.setMotionVariantOverride(variantId);
+  anim.startSpin(mode, spinMs, 0);
+  anim.sample(spinMs);
+  anim.startLand(n, mode, landMs, spinMs);
+  const activeVariantId = anim.getMotionVariantId();
+  for (let dt = 0; dt <= landMs; dt += 1) {
+    const s = anim.sample(spinMs + dt);
+    if (s.phase === "sync" || s.phase === "final_brake" || s.phase === "full_stop") return { captureMs: dt, variantId: activeVariantId };
+  }
+  throw new Error(`capture never ended for ${mode}`);
+}
+
+function captureMsFor(mode: "standard" | "full", n = 17, variantId: RouletteMotionVariantId | null = null) {
+  return captureInfoFor(mode, n, variantId).captureMs;
+}
+
+function pocketStageMoves(mode: "standard" | "full", n = 17, variantId: RouletteMotionVariantId | null = null) {
+  const { spinMs, landMs } = NOMINAL[mode];
+  const info = captureInfoFor(mode, n, variantId);
+  const windows = pocketStageWindows(mode, info.captureMs, info.variantId);
+  const anim = new WheelAnimator();
+  anim.setSeed(7);
+  anim.setMotionVariantOverride(variantId);
+  anim.startSpin(mode, spinMs, 0);
+  anim.sample(spinMs);
+  anim.startLand(n, mode, landMs, spinMs);
+  return Object.fromEntries(
+    windows
+      .filter((w) => w.stage !== "deflector_exit")
+      .map((w) => {
+        const a = snap(anim.sample(spinMs + w.startMs));
+        const b = snap(anim.sample(spinMs + w.endMs));
+        return [w.stage, Math.abs(b.relativeDeg - a.relativeDeg) / SECTOR];
+      }),
+  ) as Record<Exclude<PocketAngularStage, "deflector_exit">, number>;
+}
+
+function selectedVariant(mode: "standard" | "full", seed: number, overrideId: string | null = null) {
+  const anim = new WheelAnimator();
+  anim.setSeed(seed);
+  anim.setMotionVariantOverride(overrideId);
+  anim.startSpin(mode, NOMINAL[mode].spinMs, 0);
+  return anim.sample(0).variantId;
+}
+
+function standardMotionMetrics(variantId: StandardVariantId): StandardMotionMetrics {
+  const { spinMs, landMs } = NOMINAL.standard;
+  const anim = new WheelAnimator();
+  anim.setSeed(7);
+  anim.setMotionVariantOverride(variantId);
+  anim.startSpin("standard", spinMs, 0);
+  let prev = snap(anim.sample(0));
+  let peakBallDegPerSec = 0;
+  let peakRotorDegPerSec = 0;
+  let peakRelativeDegPerSec = 0;
+  let spinEndBallDegPerSec = 0;
+  let landStartRelativeDegPerSec = 0;
+  let prePocketBallTurns = 0;
+  let prePocketRelativeTurns = 0;
+  let fullBallTurns = 0;
+  let fullRelativeTurns = 0;
+  let enteredPocketBand = false;
+
+  for (let t = 1; t <= spinMs + landMs; t += 1) {
+    if (t === spinMs) {
+      const spinEnd = snap(anim.sample(t));
+      spinEndBallDegPerSec = Math.abs(spinEnd.ballVelocityDegPerSec);
+      anim.startLand(17, "standard", landMs, spinMs);
+      landStartRelativeDegPerSec = Math.abs(anim.sample(t).relativeVelocityDegPerSec);
+    }
+
+    const s = snap(anim.sample(t));
+    const ballDelta = Math.abs(s.ballDeg - prev.ballDeg) / 360;
+    const relativeDelta = Math.abs(s.relativeDeg - prev.relativeDeg) / 360;
+    fullBallTurns += ballDelta;
+    fullRelativeTurns += relativeDelta;
+    if (!enteredPocketBand) {
+      prePocketBallTurns += ballDelta;
+      prePocketRelativeTurns += relativeDelta;
+      if (s.pocketStage === "pocket_hop_1") enteredPocketBand = true;
+    }
+    peakBallDegPerSec = Math.max(peakBallDegPerSec, Math.abs(s.ballVelocityDegPerSec));
+    peakRotorDegPerSec = Math.max(peakRotorDegPerSec, Math.abs(s.rotorVelocityDegPerSec));
+    peakRelativeDegPerSec = Math.max(peakRelativeDegPerSec, Math.abs(s.relativeVelocityDegPerSec));
+    prev = s;
+  }
+
+  return {
+    peakBallDegPerSec,
+    peakRotorDegPerSec,
+    peakRelativeDegPerSec,
+    spinEndBallDegPerSec,
+    landStartRelativeDegPerSec,
+    prePocketBallTurns,
+    prePocketRelativeTurns,
+    fullBallTurns,
+    fullRelativeTurns,
+  };
+}
+
+function sampleStandardVariantAtStage(variantId: StandardVariantId, stage: PocketAngularStage) {
+  const { spinMs, landMs } = NOMINAL.standard;
+  const info = captureInfoFor("standard", 17, variantId);
+  const window = pocketStageWindows("standard", info.captureMs, variantId).find((w) => w.stage === stage);
+  if (!window) throw new Error(`missing ${stage}`);
+  const anim = new WheelAnimator();
+  anim.setSeed(7);
+  anim.setMotionVariantOverride(variantId);
+  anim.startSpin("standard", spinMs, 0);
+  anim.sample(spinMs);
+  anim.startLand(17, "standard", landMs, spinMs);
+  return snap(anim.sample(spinMs + window.startMs + window.durationMs * 0.5));
+}
+
+function observedPocketStages(variant: (typeof ROULETTE_MOTION_VARIANTS)[number], stepMs = 1) {
+  const { spinMs, landMs } = NOMINAL[variant.mode];
+  const anim = new WheelAnimator();
+  anim.setSeed(7);
+  anim.setMotionVariantOverride(variant.id);
+  anim.startSpin(variant.mode, spinMs, 0);
+  anim.sample(spinMs);
+  anim.startLand(17, variant.mode, landMs, spinMs);
+
+  const firstByStage = new Map<PocketAngularStage, WheelSample & { elapsedMs: number; progress: number }>();
+  const counts = new Map<PocketAngularStage, number>();
+  const transitions: Array<PocketAngularStage | null> = [];
+  let previousStage: PocketAngularStage | null | undefined = undefined;
+  for (let elapsedMs = 0; elapsedMs <= landMs; elapsedMs += stepMs) {
+    const s = snap(anim.sample(spinMs + elapsedMs));
+    if (s.pocketStage !== previousStage) {
+      transitions.push(s.pocketStage);
+      previousStage = s.pocketStage;
+    }
+    if (s.pocketStage) {
+      counts.set(s.pocketStage, (counts.get(s.pocketStage) ?? 0) + 1);
+      if (!firstByStage.has(s.pocketStage)) firstByStage.set(s.pocketStage, { ...s, elapsedMs, progress: elapsedMs / landMs });
+    }
+  }
+  return { counts, firstByStage, transitions, end: snap(anim.sample(spinMs + landMs)) };
+}
+
 describe("WheelAnimator — independent oracle", () => {
   it("EUROPEAN_WHEEL is a clean permutation of 0..36 (oracle sanity)", () => {
     expect(EUROPEAN_WHEEL.length).toBe(37);
     expect(new Set(EUROPEAN_WHEEL).size).toBe(37);
     expect([...EUROPEAN_WHEEL].sort((a, b) => a - b)).toEqual(ALL_NUMBERS);
+  });
+});
+
+describe("WheelAnimator motion variants", () => {
+  it("defines separate standard/full variant families and non-proportional standard timing", () => {
+    const standard = rouletteMotionVariantsForMode("standard");
+    const full = rouletteMotionVariantsForMode("full");
+    expect(standard.map((v) => v.id)).toEqual(["standard_direct", "standard_high_hop", "standard_shallow_hit"]);
+    expect(full.map((v) => v.id)).toEqual(["full_long_track", "full_suspense_hang", "full_high_deflector", "full_low_fast_settle"]);
+    expect(NOMINAL.standard.spinMs + NOMINAL.standard.landMs).toBeGreaterThanOrEqual(4200);
+    expect(NOMINAL.standard.spinMs + NOMINAL.standard.landMs).toBeLessThanOrEqual(4800);
+    expect(NOMINAL.full.spinMs + NOMINAL.full.landMs).toBe(8000);
+    const totalRatio = (NOMINAL.standard.spinMs + NOMINAL.standard.landMs) / (NOMINAL.full.spinMs + NOMINAL.full.landMs);
+    const hopRatio = standard[0]!.timings.hop1Ms / full[0]!.timings.hop1Ms;
+    expect(Math.abs(hopRatio - totalRatio)).toBeGreaterThan(0.25); // standard is not a uniform full-speedup.
+  });
+
+  it("selects variants deterministically from seed, stays fixed, and supports debug overrides", () => {
+    for (const mode of REALISM_MODES) {
+      const variants = rouletteMotionVariantsForMode(mode).map((v) => v.id);
+      const seq = rouletteMotionVariantSequence(mode, 42, variants.length * 3);
+      expect(seq).toEqual(rouletteMotionVariantSequence(mode, 42, variants.length * 3));
+      for (let start = 0; start < seq.length; start += variants.length) {
+        expect(new Set(seq.slice(start, start + variants.length))).toEqual(new Set(variants));
+      }
+      for (let i = variants.length; i < seq.length; i += variants.length) {
+        expect(seq[i]).not.toBe(seq[i - 1]);
+      }
+    }
+
+    expect(selectedVariant("standard", 1, "standard_high_hop")).toBe("standard_high_hop");
+    expect(selectedVariant("full", 1, "full_low_fast_settle")).toBe("full_low_fast_settle");
+    expect(selectedVariant("standard", 1, "not_a_variant")).toBe("standard_direct");
+    expect(selectedVariant("full", 1, "standard_direct")).toBe("full_long_track");
+
+    const anim = new WheelAnimator();
+    anim.setSeed(100);
+    anim.startSpin("full", NOMINAL.full.spinMs, 0);
+    const id = anim.sample(0).variantId;
+    anim.sample(NOMINAL.full.spinMs * 0.5);
+    anim.sample(NOMINAL.full.spinMs + 120_000); // hidden-tab style jump during the same spin.
+    expect(anim.sample(NOMINAL.full.spinMs + 120_000).variantId).toBe(id);
+  });
+
+  it("advances spinSeq through the deterministic standard shuffle bag", () => {
+    const seed = 77;
+    const expected = rouletteMotionVariantSequence("standard", seed, 6);
+    const anim = new WheelAnimator();
+    anim.setSeed(seed);
+    for (let i = 0; i < expected.length; i += 1) {
+      anim.startSpin("standard", NOMINAL.standard.spinMs, i * 10_000);
+      const s = snap(anim.sample(i * 10_000));
+      expect(s.variantId).toBe(expected[i]);
+      expect(s.spinSequence).toBe(i + 1);
+      expect(s.motionBagIndex).toBe(Math.floor(i / STANDARD_VARIANTS.length));
+      expect(s.motionBagSlot).toBe(i % STANDARD_VARIANTS.length);
+      expect(s.landed).toBe(false);
+    }
+  });
+
+  it("makes the three standard variants visibly different in sampled ball path output", () => {
+    const direct = sampleStandardVariantAtStage("standard_direct", "pocket_hop_1");
+    const highHop = sampleStandardVariantAtStage("standard_high_hop", "pocket_hop_1");
+    const shallow = sampleStandardVariantAtStage("standard_shallow_hit", "pocket_hop_1");
+
+    expect(direct.variantId).toBe("standard_direct");
+    expect(highHop.variantId).toBe("standard_high_hop");
+    expect(shallow.variantId).toBe("standard_shallow_hit");
+    expect(direct.phase).toBe("land");
+    expect(highHop.pocketStage).toBe("pocket_hop_1");
+    expect(shallow.pocketStage).toBe("pocket_hop_1");
+    expect(highHop.ballY).toBeGreaterThan(direct.ballY);
+    expect(direct.ballY).toBeGreaterThan(shallow.ballY);
+    expect(shallow.impactStrength).toBeGreaterThanOrEqual(direct.impactStrength * 1.25);
+    expect(shallow.rollDirection).toBe(-1);
+    expect(highHop.rollDirection).toBe(1);
+    expect(new Set([direct.ballR.toFixed(5), highHop.ballR.toFixed(5), shallow.ballR.toFixed(5)]).size).toBe(3);
+    expect(new Set([direct.ballRoll.toFixed(5), highHop.ballRoll.toFixed(5), shallow.ballRoll.toFixed(5)]).size).toBe(3);
+  });
+
+  it("observes every pocket hop stage from sample() for every standard/full variant", () => {
+    for (const variant of ROULETTE_MOTION_VARIANTS) {
+      const observed = observedPocketStages(variant, 1);
+      expect(observed.transitions.filter(Boolean)).toEqual(["deflector_exit", ...POCKET_STAGES]);
+      for (const stage of POCKET_STAGES) {
+        const first = observed.firstByStage.get(stage);
+        expect(first).toBeTruthy();
+        expect(observed.counts.get(stage)).toBeGreaterThan(0);
+        expect(first!.phase).toBe("land");
+        expect(first!.pocketStage).toBe(stage);
+        expect(allFinite(first!)).toBe(true);
+        expect(Number.isFinite(first!.elapsedMs)).toBe(true);
+        expect(first!.progress).toBeGreaterThanOrEqual(0);
+        expect(first!.progress).toBeLessThan(1);
+        expect(first!.impactStrength).toBeCloseTo(variant.visual.radialKnockScale * variant.visual.hopScale, 9);
+        expect(first!.rollDirection).toBe(variant.visual.rollDirection);
+      }
+      const stageSamples = POCKET_STAGES.map((stage) => observed.firstByStage.get(stage)!);
+      expect(new Set(stageSamples.map((s) => s.ballR.toFixed(4))).size).toBeGreaterThan(1);
+      expect(new Set(stageSamples.map((s) => s.ballY.toFixed(4))).size).toBeGreaterThan(1);
+      expect(new Set(stageSamples.map((s) => s.ballRoll.toFixed(4))).size).toBeGreaterThan(1);
+      expect(observed.end.phase).toBe("full_stop");
+      expect(observed.end.pocketStage).toBeNull();
+      expect(observed.end.rotorVelocityDegPerSec).toBeCloseTo(0, 9);
+      expect(observed.end.ballVelocityDegPerSec).toBeCloseTo(0, 9);
+      expect(observed.end.relativeVelocityDegPerSec).toBeCloseTo(0, 9);
+    }
+  });
+
+  it("cuts standard velocity and pre-pocket travel to roughly half of the previous standard implementation", () => {
+    for (const variantId of STANDARD_VARIANTS) {
+      const old = PRE_SLOWDOWN_STANDARD_METRICS[variantId];
+      const now = standardMotionMetrics(variantId);
+      for (const key of [
+        "peakBallDegPerSec",
+        "peakRelativeDegPerSec",
+        "landStartRelativeDegPerSec",
+        "prePocketBallTurns",
+        "prePocketRelativeTurns",
+      ] as const) {
+        expect(now[key]).toBeGreaterThanOrEqual(old[key] * 0.45);
+        expect(now[key]).toBeLessThanOrEqual(old[key] * 0.55);
+      }
+      expect(now.peakRotorDegPerSec).toBeGreaterThanOrEqual(old.peakRotorDegPerSec * 0.5);
+      expect(now.peakRotorDegPerSec).toBeLessThanOrEqual(old.peakRotorDegPerSec * 0.6);
+      expect(now.fullRelativeTurns).toBeLessThan(old.fullRelativeTurns * 0.56);
+      expect(now.fullBallTurns).toBeLessThan(old.fullBallTurns * 0.58);
+    }
+  });
+
+  it("keeps all variants within safe timing bands", () => {
+    const standardMaxHop = Math.max(...rouletteMotionVariantsForMode("standard").map((v) => v.timings.hop1Ms));
+    for (const variant of ROULETTE_MOTION_VARIANTS) {
+      const mode = variant.mode;
+      const captureMs = captureMsFor(mode, 17, variant.id);
+      const windows = pocketStageWindows(mode, captureMs, variant.id);
+      const hopWindows = windows.slice(1);
+      const prePocket = windows[0]!.durationMs;
+      expect(hopWindows[0]!.durationMs).toBeGreaterThanOrEqual(mode === "standard" ? 240 : 280);
+      expect(hopWindows[1]!.durationMs).toBeGreaterThanOrEqual(mode === "standard" ? 180 : 210);
+      expect(hopWindows[2]!.durationMs).toBeGreaterThanOrEqual(mode === "standard" ? 140 : 150);
+      expect(hopWindows[3]!.durationMs).toBeGreaterThanOrEqual(mode === "standard" ? 230 : 260);
+      expect(prePocket).toBeGreaterThan(900);
+      expect(variant.timings.hangMs).toBeGreaterThan(mode === "standard" ? 290 : 900);
+      expect(variant.timings.inwardDropMs).toBeGreaterThanOrEqual(mode === "standard" ? 420 : 900);
+      if (mode === "full") {
+        expect(variant.timings.trackableOrbitMs).toBeGreaterThan(1300);
+        expect(variant.timings.hop1Ms).toBeLessThan(standardMaxHop * 2);
+        expect(prePocket).toBeGreaterThan(variant.timings.deflectorApproachMs);
+      }
+    }
+  });
+
+  it("settles every pocket correctly for every standard/full variant", () => {
+    for (const variant of ROULETTE_MOTION_VARIANTS) {
+      const { spinMs, landMs } = NOMINAL[variant.mode];
+      for (const n of ALL_NUMBERS) {
+        const anim = new WheelAnimator();
+        anim.setSeed(17);
+        anim.setMotionVariantOverride(variant.id);
+        anim.startSpin(variant.mode, spinMs, 0);
+        anim.sample(spinMs);
+        anim.startLand(n, variant.mode, landMs, spinMs);
+        const end = snap(anim.sample(spinMs + landMs));
+        const later = snap(anim.sample(spinMs + landMs + 10_000));
+        expect(end.variantId).toBe(variant.id);
+        expect(angularDist(end.relativeDeg, expectedAngle(n))).toBeLessThan(1e-6);
+        expect(end.phase).toBe("full_stop");
+        expect(end.rotorVelocityDegPerSec).toBeCloseTo(0, 9);
+        expect(end.ballVelocityDegPerSec).toBeCloseTo(0, 9);
+        expect(end.relativeVelocityDegPerSec).toBeCloseTo(0, 9);
+        expect(later.rotorDeg).toBeCloseTo(end.rotorDeg, 9);
+        expect(later.ballDeg).toBeCloseTo(end.ballDeg, 9);
+        expect(later.relativeDeg).toBeCloseTo(end.relativeDeg, 9);
+      }
+    }
+  });
+
+  it("forceFinalize() keeps the exact final stop for every variant", () => {
+    for (const variant of ROULETTE_MOTION_VARIANTS) {
+      const { spinMs, landMs } = NOMINAL[variant.mode];
+      const anim = new WheelAnimator();
+      anim.setSeed(22);
+      anim.setMotionVariantOverride(variant.id);
+      anim.startSpin(variant.mode, spinMs, 0);
+      anim.sample(spinMs);
+      anim.startLand(26, variant.mode, landMs, spinMs);
+      anim.forceFinalize();
+      const forced = snap(anim.sample(spinMs + 250));
+      expect(forced.variantId).toBe(variant.id);
+      expect(forced.phase).toBe("full_stop");
+      expect(angularDist(forced.relativeDeg, expectedAngle(26))).toBeLessThan(1e-6);
+      expect(forced.rotorVelocityDegPerSec).toBeCloseTo(0, 9);
+      expect(forced.ballVelocityDegPerSec).toBeCloseTo(0, 9);
+      expect(forced.relativeVelocityDegPerSec).toBeCloseTo(0, 9);
+    }
+  });
+});
+
+describe("roulette debug motion query resolution", () => {
+  it("keeps normal no-query mode and shuffle-bag behavior untouched", () => {
+    expect(resolveRouletteDebugMotion("standard", {})).toEqual({ mode: "standard", variantOverride: null });
+    expect(resolveRouletteDebugMotion("full", {})).toEqual({ mode: "full", variantOverride: null });
+  });
+
+  it("infers full mode from full variant URLs", () => {
+    for (const variantId of ["full_long_track", "full_suspense_hang", "full_high_deflector", "full_low_fast_settle"] as const) {
+      expect(resolveRouletteDebugMotion("standard", { rouletteVariant: variantId })).toEqual({
+        mode: "full",
+        variantOverride: variantId,
+      });
+    }
+  });
+
+  it("infers standard mode from standard variant URLs", () => {
+    expect(resolveRouletteDebugMotion("full", { rouletteVariant: "standard_high_hop" })).toEqual({
+      mode: "standard",
+      variantOverride: "standard_high_hop",
+    });
+  });
+
+  it("honors explicit mode, and falls back to that mode's default on mismatch or invalid variant", () => {
+    expect(resolveRouletteDebugMotion("standard", { rouletteMode: "full", rouletteVariant: "full_long_track" })).toEqual({
+      mode: "full",
+      variantOverride: "full_long_track",
+    });
+    expect(resolveRouletteDebugMotion("standard", { rouletteMode: "standard", rouletteVariant: "full_long_track" })).toEqual({
+      mode: "standard",
+      variantOverride: "standard_direct",
+    });
+    expect(resolveRouletteDebugMotion("full", { rouletteMode: "full", rouletteVariant: "standard_shallow_hit" })).toEqual({
+      mode: "full",
+      variantOverride: "full_long_track",
+    });
+    expect(resolveRouletteDebugMotion("full", { rouletteMode: "full" })).toEqual({
+      mode: "full",
+      variantOverride: null,
+    });
+    expect(resolveRouletteDebugMotion("full", { rouletteVariant: "not_a_variant" })).toEqual({
+      mode: "full",
+      variantOverride: "full_long_track",
+    });
+    expect(resolveRouletteDebugMotion("standard", { rouletteMode: "reduced", rouletteVariant: "full_low_fast_settle" })).toEqual({
+      mode: "reduced",
+      variantOverride: null,
+    });
   });
 });
 
@@ -159,6 +609,7 @@ describe("WheelAnimator landing (§13 — derived from result.number, never the 
     for (const seed of [1, 42, 987654321, 2147483647]) {
       const anim = new WheelAnimator();
       anim.setSeed(seed);
+      anim.setMotionVariantOverride("full_long_track");
       anim.startSpin("full", 1000, 0);
       anim.sample(1000);
       anim.startLand(8, "full", 2000, 1000);
@@ -296,10 +747,13 @@ describe("WheelAnimator realism velocity contract", () => {
     }
   });
 
-  it("makes full mode's trackable boundary speed clearly slower than standard", () => {
+  it("keeps standard's trackable boundary slower than full instead of compressing the full profile", () => {
     const standard = driveNominal("standard", 17).spinEnd;
     const full = driveNominal("full", 17).spinEnd;
-    expect(absRps(full.relativeVelocityDegPerSec)).toBeLessThanOrEqual(absRps(standard.relativeVelocityDegPerSec) * 0.75);
+    expect(absRps(standard.relativeVelocityDegPerSec)).toBeLessThan(absRps(full.relativeVelocityDegPerSec));
+    expect(absRps(standard.ballVelocityDegPerSec)).toBeLessThan(absRps(full.ballVelocityDegPerSec));
+    expect(rouletteMotionVariantsForMode("standard")[0]!.spin).not.toEqual(rouletteMotionVariantsForMode("full")[0]!.spin);
+    expect(rouletteMotionVariantsForMode("standard")[0]!.timings).not.toEqual(rouletteMotionVariantsForMode("full")[0]!.timings);
   });
 
   it("ends at a full world-space stop after rotor sync and final braking", () => {
@@ -337,7 +791,8 @@ describe("WheelAnimator realism velocity contract", () => {
   it("honors the committed profile values for the trackable spin boundary", () => {
     for (const mode of REALISM_MODES) {
       const { spinEnd } = driveNominal(mode, 17);
-      const profile = WHEEL_MOTION_PROFILES[mode].spin;
+      const variant = ROULETTE_MOTION_VARIANTS.find((v) => v.id === spinEnd.variantId);
+      const profile = variant?.spin ?? WHEEL_MOTION_PROFILES[mode].spin;
       expect(spinEnd.rotorVelocityDegPerSec).toBeCloseTo(profile.rotorEndRps * 360, 9);
       expect(spinEnd.ballVelocityDegPerSec).toBeCloseTo(profile.ballEndRps * 360, 9);
     }
@@ -368,7 +823,8 @@ describe("WheelAnimator realism velocity contract", () => {
 
       expect(syncSamples.length).toBeGreaterThan(0);
       expect(brakeSamples.length).toBeGreaterThan(0);
-      const syncSpeed = WHEEL_MOTION_PROFILES[mode].land.syncRps * 360;
+      const activeVariant = ROULETTE_MOTION_VARIANTS.find((v) => v.id === anim.getMotionVariantId());
+      const syncSpeed = (activeVariant?.land.syncRps ?? WHEEL_MOTION_PROFILES[mode].land.syncRps) * 360;
       expect(Math.max(...brakeSamples.map((s) => s.rotorVelocityDegPerSec))).toBeLessThanOrEqual(syncSpeed + 1e-6);
       for (let i = 1; i < brakeSamples.length; i += 1) {
         expect(brakeSamples[i]!.rotorVelocityDegPerSec).toBeLessThanOrEqual(brakeSamples[i - 1]!.rotorVelocityDegPerSec + 1e-6);
@@ -476,8 +932,8 @@ describe("WheelAnimator endgame choreography (spec §17)", () => {
     }
   });
 
-  it("crosses many pockets during BALL_LAND, so multi-pocket travel needs no extra angle offset", () => {
-    // relativeDeg sweeps well over a dozen pockets across the land, then decelerates onto the result pocket.
+  it("still spends the early landing on meaningful travel, before the pocket-band hops take over", () => {
+    // The big alignment happens before the pocket band; the staged hops below must stay small.
     for (const mode of REALISM_MODES) {
       const { spinMs, landMs } = NOMINAL[mode];
       const anim = new WheelAnimator();
@@ -488,6 +944,78 @@ describe("WheelAnimator endgame choreography (spec §17)", () => {
       const endLocal = anim.sample(spinMs + landMs).relativeDeg;
       const pocketsCrossed = Math.abs(startLocal - endLocal) / SECTOR;
       expect(pocketsCrossed).toBeGreaterThan(12);
+    }
+  });
+
+  it("limits pocket-band angular travel to 3-4, 1-2, adjacent, then in-pocket movement", () => {
+    for (const mode of REALISM_MODES) {
+      const moves = pocketStageMoves(mode, 17);
+      expect(moves.pocket_hop_1).toBeGreaterThanOrEqual(3.0);
+      expect(moves.pocket_hop_1).toBeLessThanOrEqual(4.5);
+      expect(moves.pocket_hop_2).toBeGreaterThanOrEqual(1.0);
+      expect(moves.pocket_hop_2).toBeLessThanOrEqual(2.0);
+      expect(moves.pocket_hop_3).toBeGreaterThanOrEqual(0.5);
+      expect(moves.pocket_hop_3).toBeLessThanOrEqual(1.0);
+      expect(moves.pocket_settle).toBeGreaterThanOrEqual(0);
+      expect(moves.pocket_settle).toBeLessThanOrEqual(0.35);
+      expect(moves.pocket_hop_1).toBeLessThan(4.6); // rejects the old 14-16 pocket first hop.
+      expect(moves.pocket_hop_2).toBeLessThan(moves.pocket_hop_1);
+      expect(moves.pocket_hop_3).toBeLessThan(moves.pocket_hop_2);
+      expect(moves.pocket_settle).toBeLessThan(moves.pocket_hop_3);
+    }
+  });
+
+  it("keeps full mode's pocket-hop distances in the same range as standard", () => {
+    const standard = pocketStageMoves("standard", 17);
+    const full = pocketStageMoves("full", 17);
+    for (const stage of POCKET_STAGES) {
+      expect(full[stage]).toBeCloseTo(standard[stage], 6);
+    }
+    expect(standard.pocket_hop_1).toBeCloseTo(POCKET_HOP_BUDGETS.hop1Pockets, 6);
+    expect(standard.pocket_hop_2).toBeCloseTo(POCKET_HOP_BUDGETS.hop2Pockets, 6);
+    expect(standard.pocket_hop_3).toBeCloseTo(POCKET_HOP_BUDGETS.hop3Pockets, 6);
+    expect(standard.pocket_settle).toBeCloseTo(POCKET_HOP_BUDGETS.settlePockets, 6);
+  });
+
+  it("keeps angle and velocity C1-continuous at every pocket-stage boundary", () => {
+    for (const mode of REALISM_MODES) {
+      const { spinMs, landMs } = NOMINAL[mode];
+      const info = captureInfoFor(mode, 17);
+      const windows = pocketStageWindows(mode, info.captureMs, info.variantId);
+      const anim = new WheelAnimator();
+      anim.setSeed(19);
+      anim.setMotionVariantOverride(info.variantId);
+      anim.startSpin(mode, spinMs, 0);
+      anim.sample(spinMs);
+      anim.startLand(17, mode, landMs, spinMs);
+      const boundaries = [...windows.slice(1).map((w) => spinMs + w.startMs), spinMs + info.captureMs];
+      for (const boundary of boundaries) {
+        const before = snap(anim.sample(boundary - 0.001));
+        const at = snap(anim.sample(boundary));
+        const after = snap(anim.sample(boundary + 0.001));
+        expect(before.relativeDeg).toBeCloseTo(at.relativeDeg, 3);
+        expect(after.relativeDeg).toBeCloseTo(at.relativeDeg, 3);
+        expect(before.relativeVelocityDegPerSec).toBeCloseTo(after.relativeVelocityDegPerSec, 2);
+        expect(at.relativeVelocityDegPerSec).toBeLessThanOrEqual(1e-6);
+      }
+    }
+  });
+
+  it("aligns radius/height bounce centers to the angular pocket-hop stages", () => {
+    for (const mode of REALISM_MODES) {
+      const { spinMs, landMs } = NOMINAL[mode];
+      const info = captureInfoFor(mode, 17);
+      const windows = pocketStageWindows(mode, info.captureMs, info.variantId).slice(1);
+      const anim = new WheelAnimator();
+      anim.setSeed(23);
+      anim.setMotionVariantOverride(info.variantId);
+      anim.startSpin(mode, spinMs, 0);
+      anim.sample(spinMs);
+      anim.startLand(17, mode, landMs, spinMs);
+      for (const w of windows) {
+        const center = spinMs + w.startMs + w.durationMs * 0.5;
+        expect(anim.sample(center).pocketStage).toBe(w.stage);
+      }
     }
   });
 });
@@ -504,6 +1032,7 @@ describe("WheelAnimator FPS independence", () => {
       for (const t of checkpoints) {
         const a = thirty.get(t)!;
         for (const b of [sixty.get(t)!, oneTwenty.get(t)!]) {
+          expect(b.variantId).toBe(a.variantId);
           expect(b.ballDeg).toBeCloseTo(a.ballDeg, 9);
           expect(b.rotorDeg).toBeCloseTo(a.rotorDeg, 9);
           expect(b.relativeDeg).toBeCloseTo(a.relativeDeg, 9);

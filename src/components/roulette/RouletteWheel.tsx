@@ -20,6 +20,8 @@ export interface RouletteWheelProps {
   /** Long-mode cinematic close-up (camera dolly in the 3D wheel). */
   closeUp?: boolean;
   reducedMotion?: boolean;
+  /** Debug-only fixed motion variant override. */
+  motionVariantOverride?: string | null;
   /** Id of the live BALL_LAND event (null otherwise) — the wheel echoes it back when the ball settles. */
   landEventId?: string | null;
   /** Called ONCE when the rendered wheel's landing actually completes, so the queue can ack BALL_LAND. */
@@ -88,6 +90,7 @@ export function RouletteWheel(props: RouletteWheelProps) {
           spinMs={props.spinMs}
           landMs={props.landMs}
           closeUp={props.closeUp ?? false}
+          motionVariantOverride={props.motionVariantOverride ?? null}
           landEventId={props.landEventId ?? null}
           onLandingComplete={props.onLandingComplete}
           landingStartedAtMs={props.landingStartedAtMs ?? null}

@@ -23,6 +23,7 @@ import { RouletteControls } from "./RouletteControls";
 import { ResultBanner } from "./ResultBanner";
 import { HistoryStrip } from "./HistoryStrip";
 import { reasonText, resultMeta, POCKET_FILL } from "./rouletteLabels";
+import { readRouletteDebugMotionFromLocation } from "./rouletteDebugMotion";
 
 export interface RouletteGameProps {
   rate: Rate;
@@ -83,9 +84,11 @@ export function RouletteGame({
   const isMobile = useIsMobile();
 
   const game = useRoulette({ rate, economy, animationEnabled, resultProvider: providers?.resultProvider });
+  const debugMotion = readRouletteDebugMotionFromLocation(mode);
+  const motionMode = debugMotion.mode;
   // The wheel reports its real landing completion through this ref (§17); the queue acks BALL_LAND on it.
   const landingReporterRef = useRef<((eventId: string) => void) | null>(null);
-  const view = useRouletteAnimationQueue(game.animationEvents, game.onAnimationEventComplete, mode, reducedMotion, landingReporterRef);
+  const view = useRouletteAnimationQueue(game.animationEvents, game.onAnimationEventComplete, motionMode, reducedMotion, landingReporterRef);
   const onLandingComplete = useCallback((eventId: string) => landingReporterRef.current?.(eventId), []);
 
   if (flushRef) flushRef.current = game.flushPendingSettlement;
@@ -108,13 +111,13 @@ export function RouletteGame({
     if (!view.banner) setBannerDismissed(false);
   }, [view.banner]);
 
-  const effMode = effectiveAnimationMode(mode, reducedMotion);
-  const spinMs = durationForType("SPIN_START", mode, reducedMotion);
-  const landMs = durationForType("BALL_LAND", mode, reducedMotion);
+  const effMode = effectiveAnimationMode(motionMode, reducedMotion);
+  const spinMs = durationForType("SPIN_START", motionMode, reducedMotion);
+  const landMs = durationForType("BALL_LAND", motionMode, reducedMotion);
 
   useEffect(() => {
     if (!onInspect) return;
-    const activeDurationMs = view.activeEvent ? durationForType(view.activeEvent.type, mode, reducedMotion) : 0;
+    const activeDurationMs = view.activeEvent ? durationForType(view.activeEvent.type, motionMode, reducedMotion) : 0;
     onInspect({
       view,
       phase: game.state.phase,
@@ -126,7 +129,7 @@ export function RouletteGame({
       availableActions: game.availableActions,
       placedPositionIds: Object.keys(game.positionTotals).filter((id) => (game.positionTotals[id] ?? 0) > 0),
     });
-  }, [onInspect, view, game.state.phase, game.state.stagedTotal, game.cappedPositionIds.length, game.state.settlement, game.availableActions, game.positionTotals, mode, reducedMotion]);
+  }, [onInspect, view, game.state.phase, game.state.stagedTotal, game.cappedPositionIds.length, game.state.settlement, game.availableActions, game.positionTotals, motionMode, reducedMotion]);
 
   const betting = game.state.phase === "betting" && !game.isAnimating;
   const winningNumber = view.resultRevealed ? view.dollyNumber ?? view.landedNumber : null;
@@ -179,6 +182,7 @@ export function RouletteGame({
                   landMs={landMs}
                   closeUp={cinematic}
                   reducedMotion={reducedMotion}
+                  motionVariantOverride={debugMotion.variantOverride}
                   landEventId={landEventId}
                   onLandingComplete={onLandingComplete}
                   landingStartedAtMs={view.landingStartedAtMs}

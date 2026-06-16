@@ -10,11 +10,11 @@ import type { RouletteAnimationMode, RouletteVisualFocus } from "./animationMode
 type EventType = AnimationEvent["type"];
 type DurationTable = Readonly<Record<EventType, number>>;
 
-/** §7.1 — tempo. Total ≈ 6–8s. */
+/** §7.1 — tempo. Standard wheel motion is short, but no longer a compressed full-mode replay. */
 export const STANDARD_DURATIONS: DurationTable = {
   NO_MORE_BETS: 500,
-  SPIN_START: 1600,
-  BALL_LAND: 2200,
+  SPIN_START: 1800,
+  BALL_LAND: 2600,
   MARK_WINNER: 700,
   COLLECT_LOSING: 700,
   PAY_WINNING: 800,

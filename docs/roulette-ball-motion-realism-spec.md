@@ -86,44 +86,44 @@ x(p) =
 
 Nominal event duration:
 
-- SPIN_START: 1.6s
-- BALL_LAND: 2.2s
-- total wheel/ball motion before reveal: 3.8s
+- SPIN_START: 1.8s
+- BALL_LAND: 2.6s
+- total wheel/ball motion before reveal: 4.4s
 
-Committed profile:
+Standard is no longer a compressed copy of full. The base `WHEEL_MOTION_PROFILES.standard` remains as a
+fallback, while real standard spins choose one of the predefined `ROULETTE_MOTION_VARIANTS` at spin start.
 
 ```ts
-standard: {
-  spin: { rotorTurns: 2.0, ballTurns: -3.4, rotorEndRps: 0.9, ballEndRps: -1.2 },
-  land: { desiredRelativeTurns: 2.4, rotorTurns: 3.0, syncRps: 0.42, syncHoldMs: 180, finalBrakeMs: 450 },
-}
+standard_direct
+standard_high_hop
+standard_shallow_hit
 ```
 
-Measured nominal metrics:
+Measured nominal metrics, sampled from `WheelAnimator` at 1ms intervals for result 17:
 
-- max spin relative speed: 4.617rps / 276.992rpm
-- SPIN_START end relative speed: -2.1rps / 126rpm
-- BALL_LAND max relative speed: 2.1rps / 126rpm
-- BALL_LAND representative relative travel for result 17: 2.384 turns
-- sync hold: ball=rotor=0.42rps, relative=0
-- final stop: ball=rotor=relative=0rps
+| variant | peak ball | peak rotor | peak relative | land-start relative | pre-pocket ball turns | pre-pocket relative turns | full ball turns | full relative turns |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| standard_direct | 489.020deg/s / 1.358rps / 81.503rpm | 502.714deg/s / 1.396rps / 83.786rpm | 740.308deg/s / 2.056rps / 123.385rpm | 363.600deg/s / 1.010rps / 60.600rpm | 2.234 turns / 82.641 pockets | 3.622 turns / 134.020 pockets | 2.957 turns / 109.391 pockets | 3.784 turns / 140.000 pockets |
+| standard_high_hop | 440.458deg/s / 1.223rps / 73.410rpm | 358.759deg/s / 0.997rps / 59.793rpm | 798.762deg/s / 2.219rps / 133.127rpm | 345.600deg/s / 0.960rps / 57.600rpm | 1.908 turns / 70.580 pockets | 3.622 turns / 134.020 pockets | 2.106 turns / 77.934 pockets | 3.784 turns / 140.000 pockets |
+| standard_shallow_hit | 492.569deg/s / 1.368rps / 82.095rpm | 504.915deg/s / 1.403rps / 84.152rpm | 753.059deg/s / 2.092rps / 125.510rpm | 356.400deg/s / 0.990rps / 59.400rpm | 2.213 turns / 81.890 pockets | 3.622 turns / 134.020 pockets | 2.976 turns / 110.130 pockets | 3.784 turns / 140.000 pockets |
 
-| phase | duration | ballVelocityStart | ballVelocityEnd | rotorVelocityStart | rotorVelocityEnd | relativeVelocityStart | relativeVelocityEnd | additionalBallTurns | additionalRotorTurns | radiusStart | radiusEnd | heightStart | heightEnd | interpolation | notes |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| LAUNCH | 0.22s | 0 | -1.27 | 0 | 0.70 | 0 | -1.97 | -0.15 | 0.08 | 4.50 | 4.49 | 0.51 | 0.49 | Hermite | short acceleration, no instant max speed |
-| HIGH_SPEED_ORBIT | 0.58s | -1.27 | -2.89 | 0.70 | 1.65 | -1.97 | -4.54 | -1.31 | 0.74 | 4.49 | 4.50 | 0.49 | 0.49 | Hermite | peak speed, still below old 562.5rpm |
-| TRACKABLE_ORBIT | 0.54s | -2.89 | -2.24 | 1.65 | 1.40 | -4.54 | -3.64 | -1.49 | 0.88 | 4.50 | 4.51 | 0.49 | 0.50 | Hermite | begins slowing; ball remains on outer track |
-| LOSS_OF_STABILITY | 0.26s | -2.24 | -1.20 | 1.40 | 0.90 | -3.64 | -2.10 | -0.45 | 0.30 | 4.51 | 4.51 | 0.50 | 0.50 | Hermite | spin end velocity is BALL_LAND start velocity |
-| INWARD_DROP | 0.70s | -1.20 | 0.19 | 0.90 | 1.67 | -2.10 | -1.47 | -0.31 | 0.95 | 4.50 | 4.50 | 0.50 | 0.50 | Hermite + smootherstep | relative speed decays; no land-start spike |
-| DEFLECTOR_IMPACT | 0.57s | 0.19 | 0.72 | 1.67 | 1.65 | -1.47 | -0.93 | 0.29 | 0.98 | 4.50 | 4.07 | 0.50 | 0.31 | smootherstep + damped rattle | impact is visual radius/height motion |
-| POCKET_TRAVERSE | 0.44s | 0.72 | 0.75 | 1.65 | 1.25 | -0.93 | -0.50 | 0.34 | 0.65 | 4.07 | 3.46 | 0.31 | -0.04 | Hermite | pocket-relative speed collapses |
-| POCKET_BOUNCE | 0.31s | 0.75 | 0.59 | 1.25 | 0.77 | -0.50 | -0.18 | 0.21 | 0.32 | 3.46 | 3.30 | -0.04 | -0.10 | damped rattle | bounce range shrinks quickly |
-| POCKET_SETTLE | within land | -1.20 | 0.42 | 0.90 | 0.42 | -2.10 | 0 | 0.45 | 2.83 | 4.50 | 3.26 | 0.50 | -0.12 | Hermite + smootherstep | relative capture completes before final brake |
-| ROTOR_SYNC | 0.18s | 0.42 | 0.42 | 0.42 | 0.42 | 0 | 0 | 0.08 | 0.08 | 3.26 | 3.26 | -0.12 | -0.12 | linear hold | ball is briefly carried by rotor |
-| FINAL_BRAKE | 0.45s | 0.42 | 0 | 0.42 | 0 | 0 | 0 | 0.09 | 0.09 | 3.26 | 3.26 | -0.12 | -0.12 | Hermite | ball and rotor brake together |
-| FULL_STOP | post | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3.26 | 3.26 | -0.12 | -0.12 | constant | all angles remain fixed |
+Compared with the previous 4.4s standard implementation, the tracked standard metrics are held to roughly
+45-55% for peak ball speed, peak relative speed, land-start relative speed, pre-pocket ball travel, and
+pre-pocket relative travel. Rotor peak is held to roughly 50-60% per variant. The total duration remains
+4.4s, so the standard mode is shorter because it travels less distance at lower speed, not because full
+motion was compressed.
 
-Velocities are signed turns/second.
+Pocket-band angular hops remain fixed:
+
+```text
+HOP1:  3.6 pockets
+HOP2:  1.45 pockets
+HOP3:  0.75 pockets
+SETTLE: 0.18 pockets
+```
+
+After pocket capture, `syncHoldMs` and `finalBrakeMs` are variant-specific. Full stop still requires
+`ballVelocity = rotorVelocity = relativeVelocity = 0`, and samples after full stop remain fixed.
 
 ## 8. Full Values
 
@@ -133,13 +133,14 @@ Nominal event duration:
 - BALL_LAND: 5.0s
 - total wheel/ball motion before reveal: 8.0s
 
-Committed profile:
+Full keeps the 8.0s total, but also uses variants so the long mode is not merely a stretched standard.
+The base `WHEEL_MOTION_PROFILES.full` remains as fallback.
 
 ```ts
-full: {
-  spin: { rotorTurns: 3.0, ballTurns: -3.7, rotorEndRps: 0.75, ballEndRps: -0.65 },
-  land: { desiredRelativeTurns: 3.2, rotorTurns: 4.0, syncRps: 0.28, syncHoldMs: 300, finalBrakeMs: 700 },
-}
+full_long_track
+full_suspense_hang
+full_high_deflector
+full_low_fast_settle
 ```
 
 Measured nominal metrics:
@@ -148,10 +149,65 @@ Measured nominal metrics:
 - SPIN_START end relative speed: -1.4rps / 84rpm
 - BALL_LAND max relative speed: 1.4rps / 84rpm
 - BALL_LAND representative relative travel for result 17: 3.084 turns
+- pocket-band angular hops: 3.6 → 1.45 → 0.75 → 0.18 pockets
 - sync hold: ball=rotor=0.28rps, relative=0
 - final stop: ball=rotor=relative=0rps
 
-Full peak relative speed is about 66% of standard peak, and the trackable boundary speed is exactly 67% of standard.
+Full keeps the longer 8.0s cinematic path and its existing velocity profile. After the standard slowdown,
+full can have a higher peak/trackable relative speed than standard, but it spends the extra time on a
+longer outer-track and hang/drop path rather than stretching the pocket hops.
+
+## 8.1 Motion Variants
+
+Variant is selected once in `startSpin()` and remains fixed for the spin. It is deterministic and uses a
+shuffle bag per mode:
+
+```text
+chooseRouletteMotionVariant(mode, seedOverride ?? sessionSeed, debugOverride, spinSeq)
+```
+
+For standard, each bag contains exactly one `standard_direct`, one `standard_high_hop`, and one
+`standard_shallow_hit`. Bag order is seeded, every third spin reshuffles, and the bag boundary is adjusted
+so the last variant of one bag is not repeated as the first variant of the next bag. The same seed and
+spin sequence always produce the same order. Full uses the same mechanism with its four variants.
+
+`setMotionVariantOverride(id)` and the browser query parameter `?rouletteVariant=<id>` can force a
+variant for debug/QA. Browser debug mode resolves motion in this priority order:
+
+```text
+explicit ?rouletteMode=
+→ mode inferred from ?rouletteVariant=
+→ UI-selected mode
+→ default mode
+```
+
+This means `?rouletteVariant=full_long_track` alone runs full-mode motion. If explicit mode and variant
+mode disagree, the same-mode default is used (`standard_direct` / `full_long_track`). Invalid variant ids
+also fall back to the selected/inferred mode default. Query absence keeps normal UI mode and shuffle-bag
+selection. `sample()` never calls `Math.random()` and never reselects a variant, so FPS, hidden-tab jumps,
+and React re-renders cannot change the variant mid-spin.
+
+Debug QA can enable `?rouletteDebugMotion=1`, which adds a small overlay and root `data-*` attributes:
+`data-motion-mode`, `data-motion-variant`, `data-motion-phase`, `data-pocket-stage`,
+`data-motion-stage`, `data-spin-sequence`, `data-motion-bag-index`, and `data-motion-bag-slot`. The
+overlay/data attributes are written imperatively from the sampled frame state so React batching cannot
+drop short-lived pocket labels. High-density `sample()` checks must still observe
+`pocket_hop_1 → pocket_hop_2 → pocket_hop_3 → pocket_settle` for every standard/full variant.
+
+| variant | total | trackable | loss | hang | inward | deflector approach | HOP1 | HOP2 | HOP3 | settle | sync | final brake | visual intent |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| standard_direct | 4.4s | 720ms | 310ms | 360ms | 430ms | 260ms | 260ms | 190ms | 150ms | 240ms | 190ms | 520ms | plain readable drop/hit |
+| standard_high_hop | 4.4s | 680ms | 300ms | 300ms | 420ms | 390ms | 250ms | 185ms | 145ms | 230ms | 180ms | 500ms | stronger first hop |
+| standard_shallow_hit | 4.4s | 760ms | 340ms | 440ms | 430ms | 125ms | 270ms | 200ms | 155ms | 240ms | 200ms | 540ms | longer hang, lower radial hit |
+| full_long_track | 8.0s | 1500ms | 650ms | 1100ms | 1000ms | 940ms | 300ms | 220ms | 160ms | 280ms | 300ms | 700ms | long trackable orbit |
+| full_suspense_hang | 8.0s | 1360ms | 760ms | 1450ms | 900ms | 700ms | 290ms | 215ms | 155ms | 280ms | 330ms | 680ms | long instability/hang |
+| full_high_deflector | 8.0s | 1420ms | 620ms | 950ms | 1000ms | 1060ms | 315ms | 225ms | 165ms | 285ms | 290ms | 710ms | clearer high impact |
+| full_low_fast_settle | 8.0s | 1460ms | 600ms | 1050ms | 950ms | 1165ms | 285ms | 210ms | 150ms | 260ms | 280ms | 650ms | low sharp settle |
+
+Variant may change only safe visual/timing values: trackable/hang/drop/approach timing, hop height,
+radial knock strength, roll sign/amplitude, rattle scale, and small final-brake differences. It must not
+change result number, wheel order, `angleOf`, final pocket, `relativeDeg mod 360`, ACK timing gate,
+result reveal timing, camera, geometry, material, or full-stop immutability.
 
 | phase | duration | ballVelocityStart | ballVelocityEnd | rotorVelocityStart | rotorVelocityEnd | relativeVelocityStart | relativeVelocityEnd | additionalBallTurns | additionalRotorTurns | radiusStart | radiusEnd | heightStart | heightEnd | interpolation | notes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
@@ -196,12 +252,13 @@ land.ball.v0 = land.rotor.v0 + land.relative.v0
 
 1. `currentRelativeDeg = currentBallDeg - currentRotorDeg`
 2. `targetRelativeDeg mod 360 = angleOf(result.number)`
-3. `targetRelativeDeg < currentRelativeDeg` となる候補を列挙
-4. `desiredRelativeTurns` に最も近く、かつHermite速度が単調減少する候補を選ぶ
-5. 速度上限を満たす候補があれば優先
-6. 終端は `relativeVelocity = 0`
+3. 最終ポケット中心から `POCKET_HOP_1 / 2 / 3 / SETTLE` の角度予算を逆算する
+4. ポケット帯進入後は `3.6 → 1.45 → 0.75 → 0.18 pockets` の段階移動に固定する
+5. その直前の `DEFLECTOR_EXIT` で必要な残り角度を消化し、開始速度の105%を超えない候補を優先する
+6. 各区間はHermiteでC1連続にし、終端は `relativeVelocity = 0`
 
-これにより、結果ポケットへ直接lerpせず、数ポケットから数周の相対移動を経て自然に収束する。
+これにより、結果ポケットへ直接lerpせず、外周/ディフレクター後に必要な相対移動を消化し、ポケット帯では
+3〜4 / 1〜2 / 隣接 / ポケット内部へ急速に収束する。
 
 ## 11. Rotor Sync
 
@@ -230,7 +287,10 @@ ballDeg = rotorDeg + relativeDeg
 - cubic Hermiteで角度と速度をC1連続化。
 - BALL_LAND targetをrotor-localで選ぶよう変更。
 - `forceFinalize()` はp=1の半径/高さへ即時スナップ。
-- testsに速度上限、速度連続、full/standard差、rotor sync、final brake、full stop、FPS非依存を追加。
+- `relativeDeg` のポケット帯ステージを追加し、角度方向も `3.6 → 1.45 → 0.75 → 0.18 pockets` で収束。
+- `ROULETTE_MOTION_VARIANTS` と決定的seed選択/debug固定を追加し、standardをfullの単純圧縮から分離。
+- testsに速度上限、速度連続、full/standard差、variant選択、全variant×全37番号、ポケット帯の角度収束、
+  rotor sync、final brake、full stop、FPS非依存を追加。
 
 ## 13. Claude Code側の実装内容
 
@@ -255,17 +315,24 @@ Claude Codeへ残す内容:
 - spin->land境界で速度がC1連続。
 - standard/fullの最大相対速度を上限内に抑制。
 - BALL_LAND開始後の相対速度が増えない。
-- fullのtrackable boundary relative speedがstandardの75%以下。
+- standardのtrackable boundary速度がfullより低く、fullの単純圧縮ではない。
 - sync holdでball velocityとrotor velocityが一致。
+- pocket-band angular hopsがstandard/fullとも 3.6 / 1.45 / 0.75 / 0.18 pockets。
+- standard速度/距離が前回standard実装値の45-55%帯、rotor peakが50-60%帯。
+- standard shuffle bagが3回内で重複せず、バッグ境界でも同variantが連続しない。
+- standard 3variantの `ballR`, `ballY`, `ballRoll`, `impactStrength`, `variantId` が実サンプルで異なる。
+- pocket stage境界で角度・速度がC1連続。
 - final brake後にball/rotor/relative velocityがすべて0。
 - 終端後の角度・半径・高さが不変。
 - 30fps/60fps/120fps相当で同時刻の状態が一致。
+- 同じseedでは同じvariant、不正debug指定はmode default、variantは同一spin中に不変。
+- 全variantでforced 0/5/10/17/26、および全37番号が最終ポケットへ一致。
 
 ## 15. Completion Conditions
 
 - 旧speed spikeを数値で説明できる。
 - standard/fullの新しい回転数と速度がコード化されている。
-- fullがstandardより明確に遅い。
+- standardがfullの早送り版ではなく、短距離・低速の独立モーションになっている。
 - BALL_LAND開始時に600rpm以上の相対速度が発生しない。
 - SPIN_STARTからBALL_LANDへ速度が連続。
 - 結果ポケットへ正確に収束。
@@ -335,9 +402,18 @@ p=1:        完全に0
 表現し、`g2 ≤ 0.5·g1`, `g3 ≤ 0.25·g1`, `g4 ≤ 0.1·g1` を満たす。減衰対象は 高さ・半径・影の大きさ／濃淡・
 球の姿勢／rollの乱れ。均等減衰やゴム球のような同高さ反復は禁止。seed差は半径/高さのラトルにのみ出す。
 
-`relativeDeg` は BALL_LAND 中に既に十数〜数十ポケット相当を掃いて減速し終端ポケットへ収束するため、
-**多ポケット通過の角度的読みは追加の角度計算なしで成立する**。表示専用 `visualAngularOffset` は、これでも
-成立しない場合に限り許可（結果非関与・決定的・始端終端0・逆戻り無し・終端ポケット不変・テスト必須）。
+`relativeDeg` 本体がポケット帯進入後に以下の段階予算で進む。これは表示専用オフセットではなく、最終結果から
+逆算したrotor-local角度本体のステージである。
+
+```text
+DEFLECTOR_EXIT: 必要な残り角度を消化（結果へ直接吸着しない）
+POCKET_HOP_1:  3.6 pockets
+POCKET_HOP_2:  1.45 pockets
+POCKET_HOP_3:  0.75 pockets
+POCKET_SETTLE: 0.18 pockets
+```
+
+standard/fullともポケット帯の移動量は同じオーダーに固定し、fullの長さは主に外周/落下前側へ配分する。
 
 ### 17.5 終端（rotor sync → final brake → full stop）
 
@@ -347,10 +423,12 @@ p=1:        完全に0
 
 ### 17.6 standard / full の配分
 
-- standard: 上記すべてを省略せず、各区間を短く圧縮（合計 ≈ 3.8s 維持）。
+- standard: 上記すべてを省略せず、fullの一律早送りにはしない。合計は 4.4s
+  （SPIN_START 1.8s / BALL_LAND 2.6s）。増加分は主にtrackable/hang/inward/deflector前へ配分し、
+  ポケット帯の角度移動量は維持する。
 - full: TRACKABLE_ORBIT / LOSS_OF_STABILITY / hang / 番号リング通過 / 落下直前の緊張を standard より明確に長く。
-  衝突後やバウンドは引き延ばさない。まず合計 8.0s 内で配分する。8.0s で不足する場合のみ full のみ
-  最大 ≈10.0s まで延長可（standard不変・速度ジャンプ無し・C1維持・forced/ACK/FPS非依存維持・前後値とテストを報告）。
+  衝突後やバウンドは引き延ばさない。合計 8.0s 維持。
+- variant: standard 3種、full 4種。variant差は外周・hang・衝突・高さ/半径/rollで表現し、カメラ/造形/材質/照明は変えない。
 
 ## 18. Result Emphasis（丸マーカー廃止 → 枠／リム発光）
 

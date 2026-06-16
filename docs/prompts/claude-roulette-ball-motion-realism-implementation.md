@@ -62,11 +62,11 @@ ballVelocity = rotorVelocity
 
 ## 4. Committed Values
 
-standard:
+standard fallback/base:
 
 ```ts
-spin: { rotorTurns: 2.0, ballTurns: -3.4, rotorEndRps: 0.9, ballEndRps: -1.2 }
-land: { desiredRelativeTurns: 2.4, rotorTurns: 3.0, syncRps: 0.42, syncHoldMs: 180, finalBrakeMs: 450 }
+spin: { rotorTurns: 0.94, ballTurns: -1.78, rotorEndRps: 0.43, ballEndRps: -0.58 }
+land: { desiredRelativeTurns: 1.0, rotorTurns: 1.55, syncRps: 0.22, syncHoldMs: 190, finalBrakeMs: 520 }
 ```
 
 full:
@@ -76,17 +76,21 @@ spin: { rotorTurns: 3.0, ballTurns: -3.7, rotorEndRps: 0.75, ballEndRps: -0.65 }
 land: { desiredRelativeTurns: 3.2, rotorTurns: 4.0, syncRps: 0.28, syncHoldMs: 300, finalBrakeMs: 700 }
 ```
 
-Do not tune these numbers casually. 見た目の違和感があっても、まずはR3F側の半径/高さ/ラトル表現だけを検討すること。
+Do not tune result/angle/final-stop contracts casually. Current live motion uses
+`ROULETTE_MOTION_VARIANTS`; `WHEEL_MOTION_PROFILES` remains as fallback/base context.
 
 ## 5. Standard / Full Difference
 
 standard:
 
-- total spin+land: 3.8s
-- peak relative speed: about 277rpm
-- land start relative speed: 126rpm
-- sync hold: 0.42rps
-- final brake: 0.45s
+- total spin+land: 4.4s
+- SPIN_START: 1.8s
+- BALL_LAND: 2.6s
+- peak relative speed: about 123-133rpm depending on variant
+- land start relative speed: about 58-61rpm depending on variant
+- pocket-band angular hops: 3.6 / 1.45 / 0.75 / 0.18 pockets
+- sync hold: variant-specific, around 0.18-0.20s
+- final brake: variant-specific, 0.50-0.54s
 - final stop: 0rps
 
 full:
@@ -94,11 +98,56 @@ full:
 - total spin+land: 8.0s
 - peak relative speed: about 183rpm
 - land start relative speed: 84rpm
-- sync hold: 0.28rps
-- final brake: 0.70s
+- pocket-band angular hops: 3.6 / 1.45 / 0.75 / 0.18 pockets
+- sync hold: variant-specific, 0.28-0.33s
+- final brake: variant-specific, 0.65-0.71s
 - final stop: 0rps
 
-full peak relative speed is about 66% of standard. ロングは単なる長時間版ではなく、球を追える速度が明確に低い。
+After the standard slowdown, standard is the lower-speed short-distance mode. Full remains the longer
+8.0s cinematic path and is not merely a stretched standard.
+
+## 5.1 Motion Variants
+
+Standard variants:
+
+- `standard_direct`: short stable orbit, clear drop, normal deflector hit
+- `standard_high_hop`: earlier exit, stronger first hop, rapid later settle
+- `standard_shallow_hit`: longer hang, lower contact, stronger radial knock than vertical hop
+
+Full variants:
+
+- `full_long_track`: long trackable orbit
+- `full_suspense_hang`: longer instability/hang with wheel flowing under the ball
+- `full_high_deflector`: clearer high deflector hit
+- `full_low_fast_settle`: low sharp hit and crisp settle
+
+Variant is selected once in `WheelAnimator.startSpin()` via a deterministic shuffle bag. For standard,
+each 3-spin bag contains direct/high_hop/shallow_hit exactly once, the order is seeded, and the bag
+boundary avoids repeating the previous bag's last variant. It must not be reselected in render or
+`sample()`. Debug fixed QA can use `WheelAnimator.setMotionVariantOverride(id)` or `?rouletteVariant=<id>`
+in the browser. Browser debug motion is resolved in this order:
+
+```text
+explicit ?rouletteMode=
+→ mode inferred from ?rouletteVariant=
+→ UI-selected mode
+→ default mode
+```
+
+So `?rouletteVariant=full_long_track` alone must run full-mode motion. If explicit mode and variant mode
+disagree, fall back to that mode's default (`standard_direct` / `full_long_track`). Query absence must keep
+normal UI mode and deterministic shuffle-bag selection.
+
+`?rouletteDebugMotion=1` shows the selected variant/phase/pocket stage/spin sequence/bag slot and adds
+matching root attributes: `data-motion-mode`, `data-motion-variant`, `data-motion-phase`,
+`data-pocket-stage`, `data-motion-stage`, `data-spin-sequence`, `data-motion-bag-index`, and
+`data-motion-bag-slot`. These debug labels are written imperatively from sampled frame state because short
+hop stages can be skipped by React state batching even when `sample()` itself visits all stages.
+
+Variant may alter only predefined-safe values: trackable/hang/drop/deflector timing, hop height, radial
+knock, roll sign/amplitude, rattle scale, and small final-brake differences. It must not alter result,
+European wheel order, `angleOf`, final pocket, `relativeDeg mod 360`, ACK/reveal gate, winner frame,
+camera, geometry, materials, or full-stop immutability.
 
 ## 6. Visual Phase Intent
 
@@ -110,8 +159,8 @@ R3F側で視覚確認するフェーズ:
 - LOSS_OF_STABILITY: 外周離脱前に一度かなり遅く感じる
 - INWARD_DROP: 半径/高さを滑らかに変え、直線吸着に見せない
 - DEFLECTOR_IMPACT: 角速度を増やさず、半径/高さ/方向変化で激しく見せる
-- POCKET_TRAVERSE: 相対移動範囲が急速に縮小する
-- POCKET_BOUNCE: 2-4回程度の見かけ上のバウンド。振幅は急速に減衰
+- POCKET_TRAVERSE: ポケット帯進入後の角度移動も 3.6 → 1.45 → 0.75 → 0.18 pockets へ急速に縮小する
+- POCKET_BOUNCE: 2-4回程度の見かけ上のバウンド。高さ/半径/rollの振幅も角度ステージと同期して急速に減衰
 - POCKET_SETTLE: ポケット内の小揺れ。ゴム球のように長く跳ねない
 - ROTOR_SYNC: 球がrotorと同速で短時間運ばれる
 - FINAL_BRAKE: 球とrotorが同じ角速度のまま共同減速する
@@ -155,7 +204,8 @@ Claude側で変更する場合:
 - 最後はポケット内部のみ
 - p=1では完全に静止、かつrelativeVelocity=0
 
-角度方向の大きな往復は入れない。必要なら球メッシュの微小回転や高さ/半径で表現する。
+角度方向の大きな往復は入れない。`relativeDeg` 本体は `DEFLECTOR_EXIT → POCKET_HOP_1 → POCKET_HOP_2 → POCKET_HOP_3 → POCKET_SETTLE`
+でC1連続に進み、ポケット帯では 3.6 / 1.45 / 0.75 / 0.18 pockets の固定予算で結果中心へ収束する。
 
 ## 10. BALL_LAND ACK
 
@@ -186,7 +236,9 @@ force finalize時:
 確認すること:
 
 - standardで速すぎない
+- standardがfullの早送り版に見えない
 - fullで球を追える時間が増えた
+- debug固定でstandard 3種 / full 4種の差が分かる
 - BALL_LAND開始時に速度が跳ねない
 - 着地前に吸着して見えない
 - 球がrotorと同期した後、共同減速してworld停止する
@@ -210,6 +262,8 @@ npm run build
 ```bash
 npm run test -- src/components/roulette/wheel3dAnimation.test.ts
 npm run test -- src/components/roulette/useRouletteAnimationQueue.test.tsx
+npm run test -- src/components/roulette/wheel3dGeometry.test.ts
+npm run test -- src/components/roulette/wheel3dResources.test.tsx
 npm run test -- src/components/roulette/RouletteWheelFallback.test.tsx
 ```
 
@@ -244,23 +298,22 @@ npm run test -- src/components/roulette/RouletteWheelFallback.test.tsx
 ```text
 高速周回 → trackableへ減速 → 外周離脱直前のhang（球が留まり、下を番号リングが流れる）
 → 内側へ落下 → ディフレクター衝突（角速度は再加速しない／半径・高さ・影・姿勢で激しく見せる）
-→ 複数ポケットをまたぐ → 跳ね幅が 3〜4 / 1〜2 / 隣接 / ポケット内 の順に急速収束
+→ 複数ポケットをまたぐ → 角度方向も跳ね幅が 3〜4 / 1〜2 / 隣接 / ポケット内 の順に急速収束
 → ポケット内で小揺れ → rotorと同期 → 共同減速 → full stop
 → 着地完了+ACK後にのみ 当選ポケット枠を発光
 ```
 
 実装契約：
 
-- 角速度・角度・`WHEEL_MOTION_PROFILES`・Hermite・結果収束・終端・BALL_LAND判定は不変。
+- 角速度・角度・Hermite・結果収束・終端・BALL_LAND判定は不変。Variantは安全範囲のタイミング/半径/高さ/rollだけ。
 - 「激しさ」は `ballR`/`ballY`/接地影/球roll・姿勢の短時間変化で出す（角速度の再加速は禁止）。
 - 段階バウンドは決定的ゲイン列 `BOUNCE_STAGE_GAINS`（中心 `BOUNCE_STAGE_CENTERS`）で表現し、
   `g2≤0.5·g1, g3≤0.25·g1, g4≤0.1·g1`、p=1で全ラトル0。均等減衰・ゴム球反復は禁止。
-- 多ポケット通過は既存 `relativeDeg` の掃き＋減速で角度的に成立済み。表示専用 `visualAngularOffset` は
-  どうしても不足する場合のみ（結果非関与・決定的・始端終端0・逆戻り無し・終端不変・テスト必須）。
+- 多ポケット通過は `DEFLECTOR_EXIT` までで消化し、ポケット帯では `relativeDeg` 本体を固定予算で段階収束させる。
+  表示専用 `visualAngularOffset` で隠す対応は不要。
 - 当選強調は丸マーカー廃止 → **当選ポケット枠の発光**（数字に重ねない）＋任意の弱いソフトライト。
   表示は `resultRevealed`（=ACK後）ゲートより前に出さない。full stop後に当選ポケット上で静止。
-- full は 8.0s 内で配分。不足時のみ full のみ ≤10.0s 延長可（standard不変・C1維持・速度ジャンプ無し・
-  forced/ACK/FPS非依存維持・前後値とテストを報告）。
+- standard は 4.4s、full は 8.0s。fullの長さを衝突後バウンドへ押し込まない。standardはfullの一律倍率版にしない。
 
 ## 17. Completion Report（追加）
 
