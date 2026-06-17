@@ -10,20 +10,23 @@ type StoreEconomyOptions = {
 };
 
 export function useStoreEconomy(gameId: GameId, options: StoreEconomyOptions = {}): GameEconomy {
-  // Store action identities are stable across renders; only `chips` changes.
+  // Store action identities are stable across renders; only balances change.
   const placeBetAction = useCasinoStore((s) => s.placeBet);
   const applyGameResult = useCasinoStore((s) => s.applyGameResult);
-  const chips = useCasinoStore((s) => s.user?.chips ?? 0);
-  const tableStackMode = options.syncTableStack === false ? "ignore" : "sync";
+  const walletChips = useCasinoStore((s) => s.user?.chips ?? 0);
+  const tableStack = useCasinoStore((s) => s.tableStack);
+  const syncTableStack = options.syncTableStack !== false;
+  const tableStackMode = syncTableStack ? "sync" : "ignore";
+  const spendableChips = syncTableStack ? (tableStack ?? 0) : walletChips;
 
   return useMemo<GameEconomy>(
     () => ({
-      chips,
+      chips: spendableChips,
       placeBet: (amount) => placeBetAction(gameId, amount, { tableStack: tableStackMode }),
       settle: (draft) => {
         applyGameResult(draft, { tableStack: tableStackMode });
       },
     }),
-    [chips, placeBetAction, applyGameResult, gameId, tableStackMode],
+    [spendableChips, placeBetAction, applyGameResult, gameId, tableStackMode],
   );
 }
