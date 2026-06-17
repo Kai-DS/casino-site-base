@@ -1,13 +1,12 @@
 // components/roulette/RouletteTable.tsx
-// The vertical 12×3 betting layout (§7.2). Hit zones come from tableLayout.ts; a tap calls
-// onPlace(positionId) and the hook validates. The UI reads `cappedPositionIds` (dim) and reveal-gated
-// winning info — it never decides legality or who won. Chips are drawn from `positionTotals`.
+// The betting board, drawn as a single SVG "printed on the felt" (spec §4.3). Chips, dolly, hover
+// preview and the win/lose styling all live INSIDE this SVG, so they share the board's coordinate
+// system and ride the table tilt automatically (§3.2.1, §4.4). Hit zones come from tableLayout.ts;
+// a tap calls onPlace(positionId). The UI never decides legality or who won.
 import { useMemo, useState } from "react";
-import { ChipStack } from "@/components/casino/ChipStack";
 import { colorOf } from "@/games/roulette/constants/wheel";
 import type { PositionId } from "@/games/roulette/types";
-import { POCKET_FILL } from "./rouletteLabels";
-import { TABLE_LAYOUT, type HitZone } from "./tableLayout";
+import { buildTableLayout, type HitZone, type Orientation } from "./tableLayout";
 
 interface RouletteTableProps {
   positionTotals: Readonly<Record<PositionId, number>>;
@@ -15,89 +14,142 @@ interface RouletteTableProps {
   interactive: boolean;
   /** Winning number once the ball has landed (reveal-gated); null hides all win/lose styling. */
   winningNumber: number | null;
+  orientation?: Orientation;
   onPlace: (positionId: PositionId) => void;
 }
 
-const pct = (v: number) => `${v * 100}%`;
+const FILL: Record<string, string> = { red: "var(--rl-red)", black: "var(--rl-black)", green: "var(--rl-zero)" };
 
-export function RouletteTable({ positionTotals, cappedPositionIds, interactive, winningNumber, onPlace }: RouletteTableProps) {
+export function RouletteTable({
+  positionTotals,
+  cappedPositionIds,
+  interactive,
+  winningNumber,
+  orientation = "landscape",
+  onPlace,
+}: RouletteTableProps) {
+  const layout = buildTableLayout(orientation);
   const [hovered, setHovered] = useState<HitZone | null>(null);
   const capped = useMemo(() => new Set(cappedPositionIds), [cappedPositionIds]);
+  const hoveredCovered = useMemo(() => new Set(hovered?.covered ?? []), [hovered]);
   const revealed = winningNumber != null;
 
-  const cells = TABLE_LAYOUT.zones.filter((z) => z.layer === "cell" || z.layer === "outside");
-  const edges = TABLE_LAYOUT.zones.filter((z) => z.layer === "edge" || z.layer === "corner");
-  const chipZones = TABLE_LAYOUT.zones.filter((z) => (positionTotals[z.id] ?? 0) > 0);
-
-  const hoveredCovered = useMemo(() => new Set(hovered?.covered ?? []), [hovered]);
+  const cells = layout.zones.filter((z) => z.kind === "straight");
+  const outside = layout.zones.filter((z) => z.layer === "outside");
+  const hitZones = layout.zones; // all clickable; paint order = corners last → on top
+  const chipZones = layout.zones.filter((z) => (positionTotals[z.id] ?? 0) > 0);
+  const numScale = orientation === "portrait" ? 0.74 : 1;
+  const erx = orientation === "portrait" ? 30 : 21;
+  const ery = orientation === "portrait" ? 22 : 25;
 
   return (
-    <div
-      className="relative w-full select-none [container-type:inline-size]"
-      style={{ aspectRatio: String(TABLE_LAYOUT.aspect) }}
-      onMouseLeave={() => setHovered(null)}
-    >
-      {/* number + outside cells */}
+    <svg viewBox={`0 0 ${layout.vbW} ${layout.vbH}`} className="h-full w-full select-none" role="group" aria-label="Roulette betting table">
+      <defs>
+        <linearGradient id="rlGoldMetal" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#FFF3B0" />
+          <stop offset="0.25" stopColor="#F6E27A" />
+          <stop offset="0.5" stopColor="#D4AF37" />
+          <stop offset="0.75" stopColor="#9A7A2A" />
+          <stop offset="1" stopColor="#F1DD8C" />
+        </linearGradient>
+      </defs>
+
+      {/* number cells — felt-printed colour tile + ellipse frame + serif number */}
       {cells.map((z) => {
-        const isNumber = z.kind === "straight";
-        const n = isNumber ? z.covered[0]! : null;
-        const fill = isNumber ? POCKET_FILL[colorOf(n!)] : "rgba(20,28,24,0.85)";
-        const isWin = revealed && winningNumber != null && z.covered.includes(winningNumber);
-        const isLose = revealed && !isWin;
-        const preview = hoveredCovered.size > 0 && n != null && hoveredCovered.has(n);
+        const n = z.covered[0]!;
+        const isWin = revealed && n === winningNumber;
+        const preview = hoveredCovered.has(n);
         return (
-          <button
-            key={z.id}
-            type="button"
-            disabled={!interactive}
-            onMouseEnter={() => setHovered(z)}
-            onClick={() => onPlace(z.id)}
-            className={`absolute flex items-center justify-center rounded-[3px] border text-[clamp(8px,1.4cqw,15px)] font-bold tabular-nums text-white transition-all ${
-              isWin ? "z-[1] border-[var(--gold-2)] ring-1 ring-[var(--gold-2)]" : "border-black/50"
-            } ${isLose ? "opacity-35 grayscale" : ""} ${preview ? "brightness-150" : ""} ${capped.has(z.id) ? "opacity-50" : ""}`}
-            style={{
-              left: pct(z.x),
-              top: pct(z.y),
-              width: pct(z.w),
-              height: pct(z.h),
-              background: fill,
-              boxShadow: isWin ? "0 0 10px rgba(244,214,128,0.8)" : undefined,
-            }}
-          >
-            {isNumber ? n : <span className="text-[clamp(7px,1.1cqw,11px)] font-semibold uppercase tracking-tight">{z.label}</span>}
-          </button>
+          <g key={z.id} pointerEvents="none">
+            <rect x={z.x + 5} y={z.y + 5} width={z.w - 10} height={z.h - 10} rx={6} fill={FILL[colorOf(n)]} fillOpacity={0.92} stroke="var(--rl-line)" strokeWidth={1.4} />
+            <rect x={z.x + 5} y={z.y + 5} width={z.w - 10} height={(z.h - 10) * 0.4} rx={6} fill="#ffffff" opacity={0.05} />
+            <ellipse cx={z.cx} cy={z.cy} rx={erx} ry={ery} fill="none" stroke="var(--rl-line)" strokeWidth={1.2} opacity={0.7} />
+            <text x={z.cx} y={z.cy} fill="var(--rl-ink)" fontSize={26 * numScale} fontWeight={600} fontFamily="Georgia, 'Times New Roman', serif" textAnchor="middle" dominantBaseline="central">
+              {n}
+            </text>
+            {(isWin || preview) && (
+              <rect x={z.x + 4} y={z.y + 4} width={z.w - 8} height={z.h - 8} rx={7} fill={isWin ? "rgba(244,214,128,0.16)" : "rgba(212,175,55,0.10)"} stroke="var(--rl-gold)" strokeWidth={isWin ? 2.4 : 1.2} />
+            )}
+          </g>
         );
       })}
 
-      {/* split / corner / street / six-line — thin transparent hit bands on top */}
-      {edges.map((z) => {
+      {/* outside cells — lines + label; RED/BLACK as rhombus */}
+      {outside.map((z) => {
+        const isRhombus = z.id === "red" || z.id === "black";
         const isWin = revealed && winningNumber != null && z.covered.includes(winningNumber);
+        const r = Math.min(z.h * 0.34, 16);
         return (
-          <button
-            key={z.id}
-            type="button"
-            disabled={!interactive}
-            onMouseEnter={() => setHovered(z)}
-            onClick={() => onPlace(z.id)}
+          <g key={z.id} pointerEvents="none" opacity={capped.has(z.id) ? 0.5 : 1}>
+            <rect x={z.x + 3} y={z.y + 3} width={z.w - 6} height={z.h - 6} rx={6} fill="none" stroke="var(--rl-line)" strokeWidth={1.4} opacity={0.85} />
+            {isRhombus ? (
+              <path d={`M ${z.cx} ${z.cy - r} L ${z.cx + r} ${z.cy} L ${z.cx} ${z.cy + r} L ${z.cx - r} ${z.cy} Z`} fill={z.id === "red" ? "var(--rl-red-hi)" : "var(--rl-black-hi)"} stroke="var(--rl-gold)" strokeWidth={1.4} />
+            ) : (
+              <text x={z.cx} y={z.cy} fill="var(--rl-ink)" fontSize={z.id.startsWith("column") ? 22 : 18} fontStyle="italic" fontFamily="Georgia, serif" textAnchor="middle" dominantBaseline="central">
+                {z.label}
+              </text>
+            )}
+            {isWin && <rect x={z.x + 3} y={z.y + 3} width={z.w - 6} height={z.h - 6} rx={6} fill="rgba(244,214,128,0.14)" stroke="var(--rl-gold)" strokeWidth={2} />}
+          </g>
+        );
+      })}
+
+      {/* outer gold frame */}
+      <rect x={1.5} y={1.5} width={layout.vbW - 3} height={layout.vbH - 3} rx={10} fill="none" stroke="url(#rlGoldMetal)" strokeWidth={2} opacity={0.5} />
+
+      {/* hit zones (transparent; edges/corners highlight on hover) */}
+      {hitZones.map((z) => {
+        const isEdge = z.layer === "edge" || z.layer === "corner";
+        const showHover = hovered?.id === z.id && isEdge;
+        return (
+          <rect
+            key={`hit-${z.id}`}
             aria-label={z.id}
-            className={`absolute rounded-[2px] transition-colors ${
-              isWin ? "bg-[var(--gold-2)]/40" : "bg-transparent hover:bg-white/25"
-            } ${capped.has(z.id) ? "ring-1 ring-red-400/40" : ""}`}
-            style={{ left: pct(z.x), top: pct(z.y), width: pct(z.w), height: pct(z.h), zIndex: 2 }}
+            x={z.x}
+            y={z.y}
+            width={z.w}
+            height={z.h}
+            rx={isEdge ? 2 : 6}
+            fill={showHover ? "rgba(212,175,55,0.28)" : "transparent"}
+            style={{ cursor: interactive ? "pointer" : "default", pointerEvents: interactive ? "auto" : "none" }}
+            onMouseEnter={() => setHovered(z)}
+            onMouseLeave={() => setHovered((h) => (h?.id === z.id ? null : h))}
+            onClick={() => interactive && onPlace(z.id)}
           />
         );
       })}
 
-      {/* chip stacks (display only) */}
+      {/* chips */}
       {chipZones.map((z) => (
-        <div
-          key={`chip-${z.id}`}
-          className="pointer-events-none absolute z-[3] -translate-x-1/2 -translate-y-1/2"
-          style={{ left: pct(z.x + z.w / 2), top: pct(z.y + z.h / 2) }}
-        >
-          <ChipStack amount={positionTotals[z.id] ?? 0} showAmount={false} size="sm" />
-        </div>
+        <ChipMark key={`chip-${z.id}`} x={z.cx} y={z.cy} amount={positionTotals[z.id] ?? 0} />
       ))}
-    </div>
+
+      {/* dolly on the winning number */}
+      {revealed &&
+        winningNumber != null &&
+        (() => {
+          const wz = cells.find((z) => z.covered[0] === winningNumber);
+          if (!wz) return null;
+          return (
+            <g pointerEvents="none">
+              <ellipse cx={wz.cx} cy={wz.y + 13} rx={9} ry={4} fill="url(#rlGoldMetal)" stroke="#6b5212" strokeWidth={1} />
+              <rect x={wz.cx - 4} y={wz.y + 4} width={8} height={12} rx={2} fill="url(#rlGoldMetal)" stroke="#6b5212" strokeWidth={0.8} />
+              <ellipse cx={wz.cx} cy={wz.y + 4} rx={5} ry={2.4} fill="#FFF3B0" />
+            </g>
+          );
+        })()}
+    </svg>
+  );
+}
+
+function ChipMark({ x, y, amount }: { x: number; y: number; amount: number }) {
+  return (
+    <g pointerEvents="none">
+      <circle cx={x} cy={y} r={14} fill="#14110c" stroke="var(--rl-gold)" strokeWidth={1.6} />
+      <circle cx={x} cy={y} r={11} fill="none" stroke="var(--rl-gold-hi)" strokeWidth={1} strokeDasharray="3 3" opacity={0.8} />
+      <text x={x} y={y} fill="var(--rl-ink)" fontSize={11} fontWeight={700} textAnchor="middle" dominantBaseline="central">
+        {amount}
+      </text>
+    </g>
   );
 }

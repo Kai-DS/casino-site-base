@@ -1,7 +1,8 @@
 // components/roulette/Racetrack.tsx
-// Oval racetrack input device (§7.3). Numbers are laid out in WHEEL_ORDER (single source) — tapping a
-// node places a neighbours bet (center ± n straights); the four call-bet zones expand to inside
-// positions via the hook. The racetrack only ISSUES placements; the chips live on the main table.
+// Compact oval racetrack (Perspective Redesign §6), sized to the aux-row. Numbers are laid out in
+// WHEEL_ORDER (single source) — tapping a node places a neighbours bet (center ± n straights); the
+// four call-bet buttons expand to inside positions via the hook. The racetrack only ISSUES placements;
+// chips live on the main board. Cost is always shown.
 import { useState } from "react";
 import { formatChips } from "@/utils/format";
 import { WHEEL_ORDER, colorOf } from "@/games/roulette/constants/wheel";
@@ -18,32 +19,28 @@ interface RacetrackProps {
 }
 
 const SECTOR = 360 / WHEEL_ORDER.length;
-// Ellipse node positions in a 100×56 viewBox.
-const RX = 45;
-const RY = 22;
+const RX = 47;
+const RY = 13.5;
 const CX = 50;
-const CY = 28;
-
+const CY = 17;
 const CALL_ORDER: CallBetId[] = ["voisins", "tiers", "orphelins", "jeuZero"];
+const SHORT: Record<CallBetId, string> = { voisins: "VOISINS", tiers: "TIERS", orphelins: "ORPHEL.", jeuZero: "JEU 0" };
 
 export function Racetrack({ selectedChip, neighborRange, interactive, onCallBet, onNeighbors }: RacetrackProps) {
   const [n, setN] = useState(neighborRange.default);
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/35 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wide text-white/45">Racetrack</span>
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-white/45">Neighbours ±</span>
+    <div className="flex h-full flex-col rounded-lg border border-[var(--rl-gold)]/25 bg-black/30 p-2">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[9px] uppercase tracking-wide text-[var(--rl-ink-dim)]">Racetrack · neighbours ±</span>
+        <div className="flex gap-0.5">
           {Array.from({ length: neighborRange.max - neighborRange.min + 1 }, (_, i) => neighborRange.min + i).map((v) => (
             <button
               key={v}
               type="button"
               onClick={() => setN(v)}
               aria-pressed={v === n}
-              className={`focus-ring h-6 w-6 rounded-md border text-[11px] font-bold ${
-                v === n ? "border-[var(--gold-2)] bg-[var(--gold-2)] text-[#2a1d05]" : "border-white/20 text-white/70 hover:bg-white/10"
-              }`}
+              className={`h-4 w-4 rounded text-[9px] font-bold ${v === n ? "bg-[var(--rl-gold)] text-[#2a1d05]" : "border border-[var(--rl-gold)]/40 text-[var(--rl-ink-dim)]"}`}
             >
               {v}
             </button>
@@ -51,21 +48,16 @@ export function Racetrack({ selectedChip, neighborRange, interactive, onCallBet,
         </div>
       </div>
 
-      <svg viewBox="0 0 100 56" className="w-full" role="group" aria-label="Racetrack numbers">
-        <ellipse cx={CX} cy={CY} rx={RX + 4} ry={RY + 5} fill="none" stroke="#3a2f12" strokeWidth={0.8} />
-        <ellipse cx={CX} cy={CY} rx={RX - 5} ry={RY - 5} fill="none" stroke="#ffffff14" strokeWidth={0.6} />
+      <svg viewBox="0 0 100 34" className="w-full" style={{ height: 56 }} role="group" aria-label="Racetrack numbers">
+        <ellipse cx={CX} cy={CY} rx={RX + 2.5} ry={RY + 3} fill="none" stroke="var(--rl-gold)" strokeOpacity={0.3} strokeWidth={0.6} />
         {WHEEL_ORDER.map((num, i) => {
-          const p = pointOnCircleEllipse(i * SECTOR);
+          const u = pointOnCircle(0, 0, 1, i * SECTOR);
+          const x = CX + u.x * RX;
+          const y = CY + u.y * RY;
           return (
-            <g
-              key={num}
-              role="button"
-              tabIndex={interactive ? 0 : -1}
-              onClick={() => interactive && onNeighbors(num, n)}
-              style={{ cursor: interactive ? "pointer" : "default" }}
-            >
-              <circle cx={p.x} cy={p.y} r={3.2} fill={POCKET_FILL[colorOf(num)]} stroke="#0c0f17" strokeWidth={0.4} />
-              <text x={p.x} y={p.y} fill="#fff" fontSize={2.6} fontWeight={700} textAnchor="middle" dominantBaseline="central">
+            <g key={num} role="button" tabIndex={interactive ? 0 : -1} style={{ cursor: interactive ? "pointer" : "default" }} onClick={() => interactive && onNeighbors(num, n)}>
+              <circle cx={x} cy={y} r={2.3} fill={POCKET_FILL[colorOf(num)]} stroke="var(--rl-gold)" strokeWidth={0.3} strokeOpacity={0.5} />
+              <text x={x} y={y} fill="#fff" fontSize={1.9} fontWeight={700} textAnchor="middle" dominantBaseline="central">
                 {num}
               </text>
             </g>
@@ -73,32 +65,23 @@ export function Racetrack({ selectedChip, neighborRange, interactive, onCallBet,
         })}
       </svg>
 
-      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-auto grid grid-cols-4 gap-1">
         {CALL_ORDER.map((id) => {
           const def = CALL_BET_DEFS[id];
-          const cost = def.chipCount * selectedChip;
           return (
             <button
               key={id}
               type="button"
               disabled={!interactive}
               onClick={() => onCallBet(id)}
-              className="focus-ring rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-left transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rl-pill rounded px-1 py-1 text-left leading-tight disabled:cursor-not-allowed"
             >
-              <div className="text-[10px] font-bold uppercase tracking-tight text-[var(--gold-2)]">{def.label}</div>
-              <div className="text-[9px] text-white/55">
-                {def.chipCount} × {formatChips(selectedChip)} = <span className="tabular-nums text-white/80">{formatChips(cost)}</span>
-              </div>
+              <div className="text-[9px] font-bold text-[var(--rl-gold-hi)]">{SHORT[id]}</div>
+              <div className="text-[8px] tabular-nums text-[var(--rl-ink-dim)]">{def.chipCount}×{formatChips(selectedChip)}={formatChips(def.chipCount * selectedChip)}</div>
             </button>
           );
         })}
       </div>
     </div>
   );
-}
-
-function pointOnCircleEllipse(deg: number): { x: number; y: number } {
-  // reuse the angle convention (0 = top, clockwise) but on an ellipse
-  const unit = pointOnCircle(0, 0, 1, deg);
-  return { x: CX + unit.x * RX, y: CY + unit.y * RY };
 }
