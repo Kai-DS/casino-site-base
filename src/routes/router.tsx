@@ -11,7 +11,24 @@ import { AppShell } from "@/components/layout/AppShell";
 import { RouteErrorBoundary } from "@/components/layout/RouteErrorBoundary";
 import { VideoPokerSandbox } from "@/sandbox/videoPoker/VideoPokerSandbox";
 import { TexasHoldemSandbox } from "@/sandbox/texasHoldem/TexasHoldemSandbox";
-import { RouletteSandbox } from "@/sandbox/roulette/RouletteSandbox";
+
+type RouletteSandboxEnv = Pick<ImportMetaEnv, "DEV">;
+
+export function rouletteSandboxRouteEnabled(env: RouletteSandboxEnv = import.meta.env): boolean {
+  return env.DEV;
+}
+
+const rouletteSandboxRoutes = import.meta.env.DEV
+  ? [
+      {
+        path: "/sandbox/roulette",
+        lazy: async () => {
+          const { RouletteSandbox } = await import("@/sandbox/roulette/RouletteSandbox");
+          return { Component: RouletteSandbox };
+        },
+      },
+    ]
+  : [];
 
 // URLs are kebab-case; GameIds are camelCase — the mapping lives in constants/games.ts (spec §6).
 export const router = createBrowserRouter([
@@ -20,7 +37,7 @@ export const router = createBrowserRouter([
   // Isolated dev harness — no auth/lobby, mock economy. Same game logic as production.
   { path: "/sandbox/video-poker", element: <VideoPokerSandbox /> },
   { path: "/sandbox/texas-holdem", element: <TexasHoldemSandbox /> },
-  { path: "/sandbox/roulette", element: <RouletteSandbox /> },
+  ...rouletteSandboxRoutes,
   {
     element: <AppShell />, // shared header/layout + guest-login guard
     errorElement: <RouteErrorBoundary />,

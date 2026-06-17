@@ -7,15 +7,15 @@ import { useRouletteAnimationMode } from "@/components/roulette/useRouletteAnima
 import { RescueModal } from "@/components/casino/RescueModal";
 
 /**
- * Production Roulette table (hidden route — the lobby card stays `comingSoon`). The lobby's
- * rate-select sets `currentRate`; roulette is non-seated and stages bets locally, so the store
- * economy runs with `syncTableStack: false` (chips are the only thing that moves — base spec §2.3).
+ * Production Roulette table. The lobby's rate-select sets `currentRate` and `tableStack`; roulette
+ * uses the store-owned stack as its spendable session cap, with chips/tableStack moving in lockstep.
  * The animation mode is the persisted user choice. flushPendingSettlement is wired to unmount so a
  * forced leave mid-spin still settles (the hook also self-flushes as the real backstop).
  */
 export function RoulettePage() {
   const navigate = useNavigate();
   const rate = useCasinoStore((s) => s.currentRate);
+  const stack = useCasinoStore((s) => s.tableStack);
   const user = useCasinoStore((s) => s.user);
   const leaveTable = useCasinoStore((s) => s.leaveTable);
   const claimDailyBonus = useCasinoStore((s) => s.claimDailyBonus);
@@ -23,7 +23,7 @@ export function RoulettePage() {
   const canClaimDailyBonus = useCasinoStore((s) => s.canClaimDailyBonus);
   const canRescue = useCasinoStore((s) => s.canRescue);
   const rescueCooldownMinutes = useCasinoStore((s) => s.rescueCooldownMinutes);
-  const economy = useStoreEconomy("roulette", { syncTableStack: false });
+  const economy = useStoreEconomy("roulette");
   const { mode, setMode } = useRouletteAnimationMode();
 
   const flushRef = useRef<(() => void) | null>(null);
@@ -32,11 +32,12 @@ export function RoulettePage() {
   // Forced-leave guard (§2.3): settle any pending spin on unmount.
   useEffect(() => () => flushRef.current?.(), []);
 
-  // No rate chosen (e.g. a reload — currentRate is runtime-only) → back to the lobby.
-  if (!rate) return <Navigate to="/lobby" replace />;
+  // No table chosen (e.g. a reload — currentRate/tableStack are runtime-only) → back to the lobby.
+  if (!rate || stack === null) return <Navigate to="/lobby" replace />;
 
   const chips = user?.chips ?? 0;
   const exit = () => {
+    flushRef.current?.();
     leaveTable();
     navigate("/lobby");
   };

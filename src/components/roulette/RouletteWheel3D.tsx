@@ -30,6 +30,7 @@ import {
 } from "./wheel3dGeometry";
 import { WheelAnimator } from "./wheel3dAnimation";
 import { WHEEL_CAMERA_POSITION, WHEEL_CAMERA_LOOK_AT, WHEEL_CAMERA_FOV } from "./wheel3dCamera";
+import { readRouletteDebugOverlayFromLocation } from "./rouletteDebugMotion";
 
 export interface RouletteWheel3DProps {
   activeEventType: string | null;
@@ -114,15 +115,6 @@ const deg = THREE.MathUtils.degToRad;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
-function rouletteDebugMotionFromQuery(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return new URLSearchParams(window.location.search).get("rouletteDebugMotion") === "1";
-  } catch {
-    return false;
-  }
-}
-
 interface MotionDebugState {
   mode: RouletteAnimationMode;
   variantId: string | null;
@@ -136,7 +128,7 @@ interface MotionDebugState {
 // camera framing lives in ./wheel3dCamera — one fixed 3/4 view shared by EVERY mode (no per-mode dolly).
 
 export function RouletteWheel3D(props: RouletteWheel3DProps) {
-  const debugMotion = rouletteDebugMotionFromQuery();
+  const debugMotion = readRouletteDebugOverlayFromLocation();
   const rootRef = useRef<HTMLDivElement>(null);
   const debugPanelRef = useRef<HTMLDivElement>(null);
   const writeMotionDebug = (sample: MotionDebugState) => {

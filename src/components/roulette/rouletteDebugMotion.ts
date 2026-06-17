@@ -11,6 +11,12 @@ export interface RouletteDebugMotionResolution {
   variantOverride: RouletteMotionVariantId | null;
 }
 
+type RouletteDebugEnv = Pick<ImportMetaEnv, "DEV">;
+
+export function rouletteDebugQueriesEnabled(env: RouletteDebugEnv = import.meta.env): boolean {
+  return env.DEV;
+}
+
 function variantMode(variantId: RouletteMotionVariantId): Exclude<RouletteAnimationMode, "reduced"> {
   return ROULETTE_MOTION_VARIANTS.find((variant) => variant.id === variantId)!.mode;
 }
@@ -34,10 +40,14 @@ export function resolveRouletteDebugMotion(
   return { mode, variantOverride: defaultVariantForMode(mode) };
 }
 
-export function readRouletteDebugMotionFromLocation(uiMode: RouletteAnimationMode): RouletteDebugMotionResolution {
-  if (typeof window === "undefined") return { mode: uiMode, variantOverride: null };
+export function readRouletteDebugMotionFromSearch(
+  uiMode: RouletteAnimationMode,
+  search: string,
+  enabled = rouletteDebugQueriesEnabled(),
+): RouletteDebugMotionResolution {
+  if (!enabled) return { mode: uiMode, variantOverride: null };
   try {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(search);
     return resolveRouletteDebugMotion(uiMode, {
       rouletteMode: params.get("rouletteMode"),
       rouletteVariant: params.get("rouletteVariant"),
@@ -45,4 +55,26 @@ export function readRouletteDebugMotionFromLocation(uiMode: RouletteAnimationMod
   } catch {
     return { mode: uiMode, variantOverride: null };
   }
+}
+
+export function rouletteDebugOverlayEnabledFromSearch(
+  search: string,
+  enabled = rouletteDebugQueriesEnabled(),
+): boolean {
+  if (!enabled) return false;
+  try {
+    return new URLSearchParams(search).get("rouletteDebugMotion") === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function readRouletteDebugMotionFromLocation(uiMode: RouletteAnimationMode): RouletteDebugMotionResolution {
+  if (typeof window === "undefined") return { mode: uiMode, variantOverride: null };
+  return readRouletteDebugMotionFromSearch(uiMode, window.location.search);
+}
+
+export function readRouletteDebugOverlayFromLocation(): boolean {
+  if (typeof window === "undefined") return false;
+  return rouletteDebugOverlayEnabledFromSearch(window.location.search);
 }
